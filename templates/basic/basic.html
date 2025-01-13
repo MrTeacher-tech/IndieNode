@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.Name}}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="shop-header">
+        {{if .LogoPath}}
+            <img src="../{{.LogoPath}}" alt="{{.Name}} Logo" class="shop-logo">
+        {{end}}
+        <h1>{{.Name}}</h1>
+        {{if .Description}}
+            <p>{{.Description}}</p>
+        {{end}}
+        <div class="shop-info">
+            {{if .Location}}
+                <p><strong>Location:</strong> {{.Location}}</p>
+            {{end}}
+            {{if .Email}}
+                <p><strong>Email:</strong> {{.Email}}</p>
+            {{end}}
+            {{if .Phone}}
+                <p><strong>Phone:</strong> {{.Phone}}</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div class="items-grid">
+        {{range .Items}}
+        <div class="item-card">
+            <div class="item-images">
+                {{range .PhotoPaths}}
+                    <img src="../{{.}}" class="item-image" alt="Product Image">
+                {{end}}
+            </div>
+            <div class="item-name">{{.Name}}</div>
+            <div class="item-price">${{printf "%.2f" .Price}}</div>
+            <div class="item-description">{{.Description}}</div>
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>
