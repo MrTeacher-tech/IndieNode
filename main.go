@@ -9,12 +9,12 @@ import (
 	_ "image/jpeg" // Register JPEG format
 	_ "image/png"  // Register PNG format
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -143,7 +143,14 @@ func showShopPreview(_ fyne.App, shopName, shopPath string) {
 
 func main() {
 	// Initialize Fyne application with a unique ID
-	mainApp = app.NewWithID("com.indienode.shopcreator")
+	mainApp = app.New()
+
+	// Set application icon
+	icon, err := fyne.LoadResourceFromPath("IndieNode_assets/indieNode_logo.png")
+	if err == nil {
+		mainApp.SetIcon(icon)
+	}
+
 	mainWindow = mainApp.NewWindow("Shop Creator")
 	mainWindow.Resize(fyne.NewSize(appWidth, appHeight))
 
@@ -169,7 +176,13 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 		shop = existingShop
 	}
 
-	var currentImagePaths []string
+	// Track original image paths and their intended relative paths
+	type ImageMapping struct {
+		OriginalPath string
+		RelativePath string
+	}
+	var currentImages []ImageMapping
+
 	var addItemFunc func()
 	var addItemBtn *widget.Button
 	var itemsList *widget.List
@@ -178,6 +191,9 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 	// Shop details
 	shopName := widget.NewEntry()
 	shopName.SetPlaceHolder("Shop Name")
+	shopName.OnChanged = func(name string) {
+		shop.Name = name
+	}
 
 	shopDescription := widget.NewMultiLineEntry()
 	shopDescription.SetPlaceHolder("Shop Description")
@@ -211,37 +227,18 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 			}
 			defer reader.Close()
 
-			// Get the path of the selected file
-			logoPath := reader.URI().Path()
+			// Store the original source path
+			sourcePath := reader.URI().Path()
+			shop.LogoPath = sourcePath // Store the source path directly
 
-			// Copy the logo to the shop's assets directory immediately
-			fileName := filepath.Base(logoPath)
-			shopDir := filepath.Join("shops", shop.Name)
-			destDir := filepath.Join(shopDir, "assets", "logos")
-
-			// Create the destination directory if it doesn't exist
-			if err := os.MkdirAll(destDir, 0755); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to create logos directory: %w", err), window)
-				return
-			}
-
-			destPath := filepath.Join(destDir, fileName)
-			if err := copyFile(logoPath, destPath); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to copy logo: %w", err), window)
-				return
-			}
-
-			// Store the relative path
-			relativePath := filepath.Join("assets", "logos", fileName)
-			shop.LogoPath = relativePath
-			shopLogo.SetText(relativePath)
-
-			// Update logo preview
+			// Update logo preview using source path
 			if logoPreview != nil {
-				logoPreview.File = filepath.Join(shopDir, relativePath)
+				logoPreview.File = sourcePath
 				logoPreview.Show()
 				logoPreview.Refresh()
 			}
+
+			shopLogo.SetText(sourcePath)
 		}, window)
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{".png", ".jpg", ".jpeg"}))
 		fd.Show()
@@ -311,21 +308,27 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 
 	updatePreviewContainer := func() {
 		previewContainer.Objects = nil
-		for _, path := range currentImagePaths {
-			// Use the full path for preview
-			fullPath := filepath.Join("shops", shop.Name, path)
-			img := canvas.NewImageFromFile(fullPath)
-			img.SetMinSize(fyne.NewSize(100, 100))
-			img.Resize(fyne.NewSize(100, 100))
-			previewContainer.Add(img)
+		for _, img := range currentImages {
+			// Use the original path for preview
+			imgObj := canvas.NewImageFromFile(img.OriginalPath)
+			imgObj.SetMinSize(fyne.NewSize(100, 100))
+			imgObj.Resize(fyne.NewSize(100, 100))
+			previewContainer.Add(imgObj)
 		}
 		previewContainer.Refresh()
 	}
 
 	// Add image button
 	addImageBtn := widget.NewButton("Add Image", func() {
+		// Only validate shop name exists in memory
+		if shop.Name == "" {
+			dialog.ShowError(fmt.Errorf("please enter a shop name before adding images"), window)
+			return
+		}
+
 		dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil {
+				log.Printf("Error opening file dialog: %v", err)
 				dialog.ShowError(err, window)
 				return
 			}
@@ -334,31 +337,14 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 			}
 			defer reader.Close()
 
-			// Get the path of the selected file
-			photoPath := reader.URI().Path()
+			// Get and store the original source path
+			sourcePath := reader.URI().Path()
+			currentImages = append(currentImages, ImageMapping{
+				OriginalPath: sourcePath,
+				RelativePath: filepath.Join("assets", "images", filepath.Base(sourcePath)),
+			})
 
-			// Copy the image to the shop's assets directory immediately
-			fileName := filepath.Base(photoPath)
-			shopDir := filepath.Join("shops", shop.Name)
-			destDir := filepath.Join(shopDir, "assets", "images")
-
-			// Create the destination directory if it doesn't exist
-			if err := os.MkdirAll(destDir, 0755); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to create images directory: %w", err), window)
-				return
-			}
-
-			destPath := filepath.Join(destDir, fileName)
-			if err := copyFile(photoPath, destPath); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to copy image: %w", err), window)
-				return
-			}
-
-			// Store the relative path
-			relativePath := filepath.Join("assets", "images", fileName)
-			currentImagePaths = append(currentImagePaths, relativePath)
-
-			// Update the preview using the full path
+			// Update preview using the original path
 			updatePreviewContainer()
 		}, window)
 	})
@@ -376,11 +362,17 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 			return
 		}
 
+		// Get the original paths for the item
+		var photoPaths []string
+		for _, img := range currentImages {
+			photoPaths = append(photoPaths, img.OriginalPath)
+		}
+
 		newItem := Item{
 			Name:        itemName.Text,
 			Price:       price,
 			Description: itemDescription.Text,
-			PhotoPaths:  currentImagePaths,
+			PhotoPaths:  photoPaths,
 		}
 
 		shop.Items = append(shop.Items, newItem)
@@ -388,7 +380,7 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 		itemName.SetText("")
 		itemPrice.SetText("")
 		itemDescription.SetText("")
-		currentImagePaths = nil
+		currentImages = nil
 		updatePreviewContainer()
 
 		itemsList.Refresh()
@@ -421,7 +413,13 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 				itemName.SetText(shop.Items[id].Name)
 				itemPrice.SetText(fmt.Sprintf("%.2f", shop.Items[id].Price))
 				itemDescription.SetText(shop.Items[id].Description)
-				currentImagePaths = shop.Items[id].PhotoPaths
+				currentImages = nil
+				for _, path := range shop.Items[id].PhotoPaths {
+					currentImages = append(currentImages, ImageMapping{
+						OriginalPath: path,
+						RelativePath: filepath.Join("assets", "images", filepath.Base(path)),
+					})
+				}
 				updatePreviewContainer()
 
 				addItemBtn.SetText("Update Item")
@@ -432,17 +430,23 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 						return
 					}
 
+					// Get the original paths for the item
+					var photoPaths []string
+					for _, img := range currentImages {
+						photoPaths = append(photoPaths, img.OriginalPath)
+					}
+
 					shop.Items[id] = Item{
 						Name:        itemName.Text,
 						Price:       price,
 						Description: itemDescription.Text,
-						PhotoPaths:  currentImagePaths,
+						PhotoPaths:  photoPaths,
 					}
 
 					itemName.SetText("")
 					itemPrice.SetText("")
 					itemDescription.SetText("")
-					currentImagePaths = nil
+					currentImages = nil
 					updatePreviewContainer()
 
 					addItemBtn.SetText("Add Item")
@@ -519,7 +523,7 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 
 		// Update logo preview if exists
 		if existingShop.LogoPath != "" {
-			logoPreview.File = filepath.Join("shops", existingShop.Name, existingShop.LogoPath)
+			logoPreview.File = existingShop.LogoPath
 			logoPreview.Show()
 			logoPreview.Refresh()
 		}
@@ -577,70 +581,65 @@ func hexToColor(hex string) color.RGBA {
 }
 
 func generateShop(shop *Shop, outputDir string) error {
-	// Create required directories
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create shop directory: %w", err)
-	}
-
-	// Create directory structure
+	// Step 1: Create the shop directory and its subdirectories
 	srcDir := filepath.Join(outputDir, "src")
-	cssDir := filepath.Join(srcDir, "css")
-	jsDir := filepath.Join(srcDir, "js")
+	assetsDir := filepath.Join(outputDir, "assets")
+	imagesDir := filepath.Join(outputDir, "assets", "images")
+	logosDir := filepath.Join(outputDir, "assets", "logos")
 
-	// Create all directories
-	for _, dir := range []string{srcDir, cssDir, jsDir} {
+	for _, dir := range []string{outputDir, srcDir, assetsDir, imagesDir, logosDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
-	// Copy all item photos to images directory
+	// Step 2: Copy logo if it exists (from source path)
+	if shop.LogoPath != "" {
+		fileName := filepath.Base(shop.LogoPath)
+		destPath := filepath.Join(logosDir, fileName)
+
+		if err := copyFile(shop.LogoPath, destPath); err != nil {
+			return fmt.Errorf("failed to copy logo: %w", err)
+		}
+
+		// Update logo path to be relative
+		shop.LogoPath = filepath.Join("assets", "logos", fileName)
+	}
+
+	// Step 3: Copy all item photos (from source paths)
 	for i, item := range shop.Items {
 		var newPaths []string
 		for _, photoPath := range item.PhotoPaths {
-			// The source path should be relative to the shop directory
-			srcPath := filepath.Join("shops", shop.Name, photoPath)
-			destPath := filepath.Join(outputDir, photoPath)
+			fileName := filepath.Base(photoPath)
+			destPath := filepath.Join(imagesDir, fileName)
 
-			// Create destination directory if it doesn't exist
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-				return fmt.Errorf("failed to create directory for %s: %w", destPath, err)
+			if err := copyFile(photoPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy photo %s: %w", fileName, err)
 			}
 
-			// Copy the file
-			if err := copyFile(srcPath, destPath); err != nil {
-				return fmt.Errorf("failed to copy photo %s: %w", filepath.Base(photoPath), err)
-			}
-
-			// Keep the same relative path
-			newPaths = append(newPaths, photoPath)
+			// Store the relative path
+			newPaths = append(newPaths, filepath.Join("assets", "images", fileName))
 		}
 		shop.Items[i].PhotoPaths = newPaths
 	}
 
-	// Copy logo if exists
-	if shop.LogoPath != "" {
-		// The source path should be relative to the shop directory
-		srcPath := filepath.Join("shops", shop.Name, shop.LogoPath)
-		destPath := filepath.Join(outputDir, shop.LogoPath)
-
-		// Create destination directory if it doesn't exist
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory for logo: %w", err)
-		}
-
-		if err := copyFile(srcPath, destPath); err != nil {
-			return fmt.Errorf("failed to copy logo: %w", err)
-		}
+	// Step 4: Save shop data as JSON
+	shopData, err := json.MarshalIndent(shop, "", "    ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal shop data: %w", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(outputDir, "shop.json"), shopData, 0644); err != nil {
+		return fmt.Errorf("failed to save shop data: %w", err)
+	}
+
+	// Step 5: Process templates and generate HTML/CSS
 	// Process CSS template
 	cssTemplate, err := template.ParseFiles(filepath.Join("templates", "basic", "basic.css"))
 	if err != nil {
 		return fmt.Errorf("failed to parse CSS template: %w", err)
 	}
 
-	// Create CSS data with color values
 	cssData := struct {
 		PrimaryColor   string
 		SecondaryColor string
@@ -651,9 +650,7 @@ func generateShop(shop *Shop, outputDir string) error {
 		TertiaryColor:  fmt.Sprintf("rgb(%d, %d, %d)", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
 	}
 
-	// Create and write CSS file
-	cssPath := filepath.Join(outputDir, "src", "css", "styles.css")
-	cssFile, err := os.Create(cssPath)
+	cssFile, err := os.Create(filepath.Join(srcDir, "styles.css"))
 	if err != nil {
 		return fmt.Errorf("failed to create CSS file: %w", err)
 	}
@@ -663,79 +660,69 @@ func generateShop(shop *Shop, outputDir string) error {
 		return fmt.Errorf("failed to write CSS file: %w", err)
 	}
 
-	// Load HTML template
+	// Process HTML template
 	htmlTemplate, err := template.ParseFiles(filepath.Join("templates", "basic", "basic.html"))
 	if err != nil {
 		return fmt.Errorf("failed to parse HTML template: %w", err)
 	}
 
-	// Create index.html in src directory
-	indexPath := filepath.Join(outputDir, "src", "index.html")
-	indexFile, err := os.Create(indexPath)
+	htmlFile, err := os.Create(filepath.Join(srcDir, "index.html"))
 	if err != nil {
-		return fmt.Errorf("failed to create index.html: %w", err)
+		return fmt.Errorf("failed to create HTML file: %w", err)
 	}
-	defer indexFile.Close()
+	defer htmlFile.Close()
 
-	// Execute HTML template
-	if err := htmlTemplate.Execute(indexFile, shop); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	// Save shop data as JSON
-	shopData := struct {
-		Name           string    `json:"name"`
-		Description    string    `json:"description"`
-		Location       string    `json:"location"`
-		Email          string    `json:"email"`
-		Phone          string    `json:"phone"`
-		PrimaryColor   string    `json:"primaryColor"`
-		SecondaryColor string    `json:"secondaryColor"`
-		TertiaryColor  string    `json:"tertiaryColor"`
-		LogoPath       string    `json:"logoPath"`
-		Items          []Item    `json:"items"`
-		CreatedAt      time.Time `json:"createdAt"`
-	}{
-		Name:           shop.Name,
-		Description:    shop.Description,
-		Location:       shop.Location,
-		Email:          shop.Email,
-		Phone:          shop.Phone,
-		PrimaryColor:   fmt.Sprintf("#%02x%02x%02x", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
-		SecondaryColor: fmt.Sprintf("#%02x%02x%02x", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
-		TertiaryColor:  fmt.Sprintf("#%02x%02x%02x", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
-		LogoPath:       shop.LogoPath,
-		Items:          shop.Items,
-		CreatedAt:      time.Now(),
-	}
-
-	jsonData, err := json.MarshalIndent(shopData, "", "    ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal shop data: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(outputDir, "shop.json"), jsonData, 0644); err != nil {
-		return fmt.Errorf("failed to write shop data: %w", err)
+	if err := htmlTemplate.Execute(htmlFile, shop); err != nil {
+		return fmt.Errorf("failed to write HTML file: %w", err)
 	}
 
 	return nil
 }
 
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
+	log.Printf("Copying file from %s to %s", src, dst)
 
-	out, err := os.Create(dst)
+	// Open source file
+	sourceFile, err := os.Open(src)
 	if err != nil {
-		return err
+		log.Printf("Failed to open source file: %v", err)
+		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer out.Close()
+	defer sourceFile.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	// Create destination file
+	destFile, err := os.Create(dst)
+	if err != nil {
+		log.Printf("Failed to create destination file: %v", err)
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer func() {
+		if err := destFile.Close(); err != nil {
+			log.Printf("Error closing destination file: %v", err)
+		}
+	}()
+
+	// Copy the contents
+	written, err := io.Copy(destFile, sourceFile)
+	if err != nil {
+		log.Printf("Failed to copy file contents: %v", err)
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	// Verify file size
+	sourceInfo, err := os.Stat(src)
+	if err != nil {
+		log.Printf("Failed to get source file info: %v", err)
+		return fmt.Errorf("failed to verify file size: %w", err)
+	}
+
+	if written != sourceInfo.Size() {
+		log.Printf("File size mismatch: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
+		return fmt.Errorf("incomplete file copy: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
+	}
+
+	log.Printf("Successfully copied %d bytes", written)
+	return nil
 }
 
 type ColorButton struct {
