@@ -1,0 +1,42 @@
+{
+    "ID": "",
+    "OwnerAddress": "0xd21386B302d0e51044246B50e18A2F61673FceC9",
+    "Name": "Ben's Shoe Store",
+    "Description": "",
+    "Location": "",
+    "Email": "",
+    "Phone": "",
+    "PrimaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "SecondaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "TertiaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "LogoPath": "../assets/logos/bens-shoe-store-logo.png",
+    "LocalLogoPath": "/Users/andrewverrilli/Desktop/BensShoeStore/bens-shoe-store-logo.png",
+    "Items": [
+        {
+            "Name": "Nikes",
+            "Price": 50,
+            "Description": "",
+            "PhotoPaths": [
+                "../assets/item_images/red-nike.jpg"
+            ],
+            "LocalPhotoPaths": [
+                "/Users/andrewverrilli/Desktop/BensShoeStore/red-nike.jpg"
+            ]
+        }
+    ]
+}

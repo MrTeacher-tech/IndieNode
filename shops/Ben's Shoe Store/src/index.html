@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Bens Shoes</title>
+    <title>Ben's Shoe Store</title>
     <style>
         :root {
             --primary-color: #000000;
@@ -36,6 +36,7 @@
             padding: 20px;
             border-radius: 8px;
             margin-bottom: 20px;
+            text-align: center;
         }
         .items {
             display: grid;
@@ -46,11 +47,29 @@
             background-color: white;
             padding: 20px;
             border-radius: 8px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .item h3 {
+            margin: 10px 0;
+            color: var(--primary-color);
         }
         .item img {
             max-width: 100%;
             height: auto;
             border-radius: 4px;
+            margin: 10px 0;
+        }
+        .item p {
+            margin: 8px 0;
+        }
+        .item .price {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: var(--secondary-color);
+            margin: 10px 0;
         }
         .logo {
             max-width: 200px;
@@ -62,9 +81,9 @@
 <body>
     <div class="header">
         
-        <img src="/Users/andrewverrilli/Desktop/BensShoeStore/bens-shoe-store-logo.png" alt="Bens Shoes Logo" class="logo">
+        <img src="../assets/logos/bens-shoe-store-logo.png" alt="Ben's Shoe Store Logo" class="logo">
         
-        <h1>Bens Shoes</h1>
+        <h1>Ben's Shoe Store</h1>
         <div class="owner-address">Owner: 0xd21386B302d0e51044246B50e18A2F61673FceC9</div>
     </div>
     
@@ -75,16 +94,16 @@
         <p><strong>Contact:</strong>  | </p>
     </div>
 
-    <h2>Our Items</h2>
+    <h2 style="text-align: center;">Our Items</h2>
     <div class="items">
         
         <div class="item">
             <h3>Nikes</h3>
             
-            <img src="/Users/andrewverrilli/Desktop/BensShoeStore/red-nike.jpg" alt="Bens Shoes">
+            <img src="../assets/item_images/red-nike.jpg" alt="Ben's Shoe Store">
             
             <p></p>
-            <p><strong>Price:</strong> $22</p>
+            <p class="price">$50</p>
         </div>
         
     </div>

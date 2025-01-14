@@ -1,0 +1,30 @@
+{
+    "ID": "",
+    "OwnerAddress": "0xd21386B302d0e51044246B50e18A2F61673FceC9",
+    "Name": "",
+    "Description": "",
+    "Location": "",
+    "Email": "",
+    "Phone": "",
+    "PrimaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "SecondaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "TertiaryColor": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+    },
+    "LogoPath": "",
+    "LocalLogoPath": "",
+    "Items": []
+}

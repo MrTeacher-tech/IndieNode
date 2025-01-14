@@ -1,0 +1,57 @@
+IMPORTANT PROJECT NOTES:
+
+IndieNode is a dapp that for decentralized ecommerce, giving full ownership of shops to buisness ownership
+
+
+1. Shop Data Management:
+   - Current shop being worked on is stored in both memory (Shop struct) and on disk (current_shop.json)
+   - current_shop.json serves as the source of truth for the shop being edited
+   -current_shop.json is cleared when generate shop button is clicked
+
+2. File Structure:
+   shops/
+   ├── [shop_name]/          # Each shop has its own directory
+   │   ├── assets/           # Contains all assets for this specific shop
+   │   │   ├── logos/        # Shop logo storage
+   │   │   └── item_images/  # Product images storage
+   │   └── src/              # Shop website files
+   │       ├── index.html
+   │       └── style.css
+
+3. Critical File Handling Rules:
+***Do not change how image files are handled in any way, if you feel like you are accidently changing how image files or paths are handled, stop what you are doing and chat with me please***
+   - NEVER create a global 'assets' directory in the main 'shops' directory
+   - When copying files (logos, images), ALWAYS:
+     * Copy FROM: The local source path stored in Shop struct and current_shop.json
+     * Copy TO: The appropriate subdirectory within the specific shop's directory
+   - All paths in the generated HTML should be relative paths within the shop's directory
+
+4. Authentication:
+   - Uses Ethereum wallet authentication via SIWE (Sign-In with Ethereum)
+   - Shop ownership is tied to Ethereum addresses
+
+5. Generated HTML:
+    - Responsive grid layout for items
+    - Centered content within item cards
+    - Color theming using shop's chosen colors
+    - Proper image paths relative to HTML location
+
+6. Main Window UI Organization:
+***Do not change how UI is handled in any way, if you feel like you are accidently changing how UI is handled, stop what you are doing and chat with me please***
+    - Use tabs for clear separation of functionality:
+      * Shop List Tab: View and manage all created shops
+      * Shop Creator Tab: Full-width interface for creating/editing shops
+      * Settings Tab: Application and IPFS settings
+    - Each tab should utilize full window width to avoid cramped interfaces
+    - Shop Creator should have:
+      * Clear sections for basic info, styling, and items
+      * Generous spacing between elements
+      * Preview area that doesn't compress input fields
+    - Avoid nested containers that make the interface feel cluttered
+    - Use scrolling containers for lists rather than compressing content
+
+## Next Steps
+1. IPFS Integration
+   - Complete daemon management
+   - Implement file pinning
+   - Add CID management
