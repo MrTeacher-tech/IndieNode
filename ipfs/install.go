@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 func NewIPFSManager(config *Config) (*IPFSManager, error) {
@@ -23,7 +24,7 @@ func NewIPFSManager(config *Config) (*IPFSManager, error) {
 	
 	manager := &IPFSManager{
 		BinaryPath: filepath.Join(basePath, "ipfs"),
-		DataPath:   filepath.Join(basePath, IPFSDataDir),
+		DataPath:   filepath.Join(basePath, "ipfs-data"),
 	}
 	
 	if runtime.GOOS == "windows" {
@@ -49,6 +50,49 @@ func (m *IPFSManager) EnsureInstalled() error {
 	return nil
 }
 
+func (m *IPFSManager) GetIPFSVersion() (string, error) {
+    // Try to get the IPFS path
+    ipfsPath, err := exec.LookPath("ipfs")
+    if err != nil {
+        // If not in PATH, use our custom location
+        ipfsPath = m.BinaryPath
+    }
+    
+    cmd := exec.Command(ipfsPath, "--version")
+    output, err := cmd.Output()
+    if err != nil {
+        return "", err
+    }
+    // Parse output to get just the version number
+    version := string(output)
+    if len(version) > 12 { // Strip "ipfs version " prefix
+        version = version[12:]
+    }
+    return strings.TrimSpace(version), nil
+}
+
+func (m *IPFSManager) IsIPFSDownloaded() (bool, string) {
+    // First check if IPFS is available in system PATH
+    if _, err := exec.LookPath("ipfs"); err == nil {
+        version, err := m.GetIPFSVersion()
+        if err == nil {
+            return true, version
+        }
+        return true, "version unknown"
+    }
+    
+    // If not in PATH, check our custom location
+    if _, err := os.Stat(m.BinaryPath); !os.IsNotExist(err) {
+        version, err := m.GetIPFSVersion()
+        if err == nil {
+            return true, version
+        }
+        return true, "version unknown"
+    }
+    
+    return false, ""
+}
+
 func (m *IPFSManager) downloadIPFS() error {
 	var arch string
 	switch runtime.GOARCH {
@@ -60,20 +104,20 @@ func (m *IPFSManager) downloadIPFS() error {
 		return fmt.Errorf("unsupported architecture: %s", runtime.GOARCH)
 	}
 	
-	var os string
+	var osName string
 	switch runtime.GOOS {
 	case "darwin":
-		os = "darwin"
+		osName = "darwin"
 	case "linux":
-		os = "linux"
+		osName = "linux"
 	case "windows":
-		os = "windows"
+		osName = "windows"
 	default:
 		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
 	
 	url := fmt.Sprintf("https://dist.ipfs.tech/kubo/%s/kubo_%s_%s-%s.tar.gz",
-		IPFSVersion, IPFSVersion[1:], os, arch)
+		IPFSVersion, IPFSVersion[1:], osName, arch)
 	
 	resp, err := http.Get(url)
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -32,7 +33,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	"shopCreator/auth"
-	"shopCreator/db" // Import the database package
+	"shopCreator/db"
+	"shopCreator/ipfs"
 )
 
 // App configuration
@@ -72,11 +74,17 @@ var (
 	mainWindow     fyne.Window
 )
 
-// Global variables for authentication
+// Global variables for authentication and IPFS
 var (
 	currentUser *auth.AuthenticatedUser
 	authMutex   sync.RWMutex
+	windowDone  chan struct{} // Channel to coordinate window transitions
+	ipfsManager *ipfs.IPFSManager
 )
+
+func init() {
+	windowDone = make(chan struct{})
+}
 
 func updateShopsList(window fyne.Window) {
 	if shopsContainer == nil {
@@ -137,7 +145,7 @@ func updateShopsList(window fyne.Window) {
 func showShopPreview(_ fyne.App, shopName, shopPath string) {
 	// Check if the shop exists
 	if _, err := os.Stat(shopPath); err != nil {
-		dialog.ShowError(fmt.Errorf("shop preview not found: %w", err), mainWindow)
+		dialog.ShowError(fmt.Errorf("shop '%s' preview not found: %w", shopName, err), mainWindow)
 		return
 	}
 
@@ -154,7 +162,7 @@ func showShopPreview(_ fyne.App, shopName, shopPath string) {
 
 	// Execute command
 	if err := cmd.Start(); err != nil {
-		dialog.ShowError(fmt.Errorf("failed to open preview: %w", err), mainWindow)
+		dialog.ShowError(fmt.Errorf("failed to open preview for shop '%s': %w", shopName, err), mainWindow)
 		return
 	}
 }
@@ -215,31 +223,11 @@ func main() {
 				// In production, this would interact with a wallet
 				simulatedSignature := "0x123..." // Placeholder signature
 
-				// Verify the signature
-				verified := auth.VerifySignature(siweMsg, simulatedSignature, address.Text)
-
-				if !verified {
-					log.Printf("Signature verification failed")
-					dialog.ShowError(fmt.Errorf("invalid signature"), signInWindow)
-					return
-				}
-
-				log.Printf("Signature verified successfully")
-
-				// Set the current user
-				currentUser = &auth.AuthenticatedUser{
-					Address:         address.Text,
-					SignedMessage:   formattedMsg,
-					Signature:       simulatedSignature,
-					AuthenticatedAt: time.Now(),
-				}
+				// Authenticate using the dedicated function
+				authenticateWithEthereum(address.Text, formattedMsg, simulatedSignature)
 
 				// Close the sign-in window
 				signInWindow.Close()
-
-				// Show the main window
-				log.Printf("Opening main window...")
-				showMainWindow()
 			},
 			signInWindow,
 		)
@@ -267,12 +255,47 @@ func showMainWindow() {
 	mainWindow = mainApp.NewWindow("IndieNode - Shop Manager")
 	mainWindow.Resize(fyne.NewSize(appWidth, appHeight))
 
-	// Create header with Ethereum address
+	// Create header with Ethereum address and IPFS status
 	addressLabel := widget.NewLabelWithStyle(
-		fmt.Sprintf("Connected: %s", currentUser.Address),
+		func() string {
+			authMutex.RLock()
+			defer authMutex.RUnlock()
+			return fmt.Sprintf("Connected: %s", currentUser.Address)
+		}(),
 		fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true},
 	)
+
+	// Initialize IPFS manager if not already initialized
+	if ipfsManager == nil {
+		var err error
+		ipfsManager, err = ipfs.NewIPFSManager(nil)
+		if err != nil {
+			dialog.ShowError(err, mainWindow)
+			return
+		}
+	}
+
+	// Create IPFS status label
+	ipfsStatusLabel := widget.NewLabelWithStyle(
+		"Checking IPFS status...",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{},
+	)
+
+	// Update IPFS status
+	go func() {
+		installed, version := ipfsManager.IsIPFSDownloaded()
+		if installed {
+			if version != "" {
+				ipfsStatusLabel.SetText(fmt.Sprintf("IPFS %s Installed", strings.TrimSpace(version)))
+			} else {
+				ipfsStatusLabel.SetText("IPFS Status: Installed")
+			}
+		} else {
+			ipfsStatusLabel.SetText("IPFS Status: Not Installed")
+		}
+	}()
 
 	// Create scrollable containers for each tab with proper padding and expansion
 	shopsScroll := container.NewMax(
@@ -302,6 +325,11 @@ func showMainWindow() {
 				addressLabel,
 				layout.NewSpacer(),
 			),
+			container.NewHBox(
+				layout.NewSpacer(),
+				ipfsStatusLabel,
+				layout.NewSpacer(),
+			),
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
@@ -313,6 +341,24 @@ func showMainWindow() {
 		mainWindow = nil
 	})
 	mainWindow.Show()
+}
+
+func safeShowMainWindow() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in showMainWindow: %v", r)
+			// Try to show an error dialog
+			if mainApp != nil {
+				errWin := mainApp.NewWindow("Error")
+				errWin.Resize(fyne.NewSize(300, 100))
+				errWin.SetContent(widget.NewLabel("An error occurred. Please restart the application."))
+				errWin.Show()
+			}
+		}
+	}()
+
+	// Let showMainWindow handle all window management
+	showMainWindow()
 }
 
 // createShopsTab creates the tab that shows the list of shops
@@ -336,14 +382,23 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 	if existingShop != nil {
 		shop = existingShop
 	} else {
-		// Start with a fresh shop
-		shop = &Shop{
-			OwnerAddress: currentUser.Address,
-			Items:        []Item{},
-		}
-		// Save the fresh shop state
-		if err := saveCurrentShop(shop); err != nil {
-			log.Printf("Error saving initial shop state: %v", err)
+		// Try to load existing current shop first
+		var err error
+		shop, err = loadCurrentShop()
+		if err != nil || shop == nil {
+			// If no current shop exists, start with a fresh one
+			authMutex.RLock()
+			userAddress := currentUser.Address
+			authMutex.RUnlock()
+			
+			shop = &Shop{
+				OwnerAddress: userAddress,
+				Items:        []Item{},
+			}
+			// Save the fresh shop state
+			if err := saveCurrentShop(shop); err != nil {
+				log.Printf("Error saving initial shop state: %v", err)
+			}
 		}
 	}
 
@@ -678,7 +733,11 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 
 	// Create header with owner's Ethereum address
 	ownerLabel := widget.NewLabelWithStyle(
-		fmt.Sprintf("Shop Owner: %s", shop.OwnerAddress),
+		func() string {
+			authMutex.RLock()
+			defer authMutex.RUnlock()
+			return fmt.Sprintf("Shop Owner: %s", currentUser.Address)
+		}(),
 		fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true},
 	)
@@ -765,44 +824,44 @@ func hexToColor(hex string) color.RGBA {
 }
 
 func generateShop(shop *Shop, outputDir string) error {
-    // Step 1: Create all necessary directories
-    if err := os.MkdirAll(filepath.Join(outputDir, "src"), 0755); err != nil {
-        return fmt.Errorf("failed to create src directory: %w", err)
-    }
-    if err := os.MkdirAll(filepath.Join(outputDir, "assets", "logos"), 0755); err != nil {
-        return fmt.Errorf("failed to create logos directory: %w", err)
-    }
-    if err := os.MkdirAll(filepath.Join(outputDir, "assets", "item_images"), 0755); err != nil {
-        return fmt.Errorf("failed to create item_images directory: %w", err)
-    }
+	// Step 1: Create all necessary directories
+	if err := os.MkdirAll(filepath.Join(outputDir, "src"), 0755); err != nil {
+		return fmt.Errorf("failed to create src directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(outputDir, "assets", "logos"), 0755); err != nil {
+		return fmt.Errorf("failed to create logos directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(outputDir, "assets", "item_images"), 0755); err != nil {
+		return fmt.Errorf("failed to create item_images directory: %w", err)
+	}
 
-    // Step 2: Copy all assets and update paths
-    // Copy logo if it exists
-    if shop.LocalLogoPath != "" {
-        destPath := filepath.Join(outputDir, "assets", "logos", filepath.Base(shop.LocalLogoPath))
-        if err := copyFile(shop.LocalLogoPath, destPath); err != nil {
-            return fmt.Errorf("failed to copy logo from %s: %w", shop.LocalLogoPath, err)
-        }
-        // Update logo path to be relative for HTML
-        shop.LogoPath = filepath.Join("../assets", "logos", filepath.Base(shop.LocalLogoPath))
-    }
+	// Step 2: Copy all assets and update paths
+	// Copy logo if it exists
+	if shop.LocalLogoPath != "" {
+		destPath := filepath.Join(outputDir, "assets", "logos", filepath.Base(shop.LocalLogoPath))
+		if err := copyFile(shop.LocalLogoPath, destPath); err != nil {
+			return fmt.Errorf("failed to copy logo from %s: %w", shop.LocalLogoPath, err)
+		}
+		// Update logo path to be relative for HTML
+		shop.LogoPath = filepath.Join("../assets", "logos", filepath.Base(shop.LocalLogoPath))
+	}
 
-    // Copy item photos and update their paths
-    for i, item := range shop.Items {
-        var newPaths []string
-        for _, photoPath := range item.LocalPhotoPaths {
-            destPath := filepath.Join(outputDir, "assets", "item_images", filepath.Base(photoPath))
-            if err := copyFile(photoPath, destPath); err != nil {
-                return fmt.Errorf("failed to copy item image from %s: %w", photoPath, err)
-            }
-            // Store the relative path for HTML
-            newPaths = append(newPaths, filepath.Join("../assets", "item_images", filepath.Base(photoPath)))
-        }
-        shop.Items[i].PhotoPaths = newPaths
-    }
+	// Copy item photos and update their paths
+	for i, item := range shop.Items {
+		var newPaths []string
+		for _, photoPath := range item.LocalPhotoPaths {
+			destPath := filepath.Join(outputDir, "assets", "item_images", filepath.Base(photoPath))
+			if err := copyFile(photoPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy item image from %s: %w", photoPath, err)
+			}
+			// Store the relative path for HTML
+			newPaths = append(newPaths, filepath.Join("../assets", "item_images", filepath.Base(photoPath)))
+		}
+		shop.Items[i].PhotoPaths = newPaths
+	}
 
-    // Step 3: Generate HTML with updated paths
-    tmpl := `<!DOCTYPE html>
+	// Step 3: Generate HTML with updated paths
+	tmpl := `<!DOCTYPE html>
 <html>
 <head>
     <title>{{.Name}}</title>
@@ -914,419 +973,437 @@ func generateShop(shop *Shop, outputDir string) error {
 </body>
 </html>`
 
-    // Create template data with hex color values
-    type TemplateData struct {
-        *Shop
-        PrimaryColorHex   string
-        SecondaryColorHex string
-        TertiaryColorHex  string
-    }
+	// Create template data with hex color values
+	type TemplateData struct {
+		*Shop
+		PrimaryColorHex   string
+		SecondaryColorHex string
+		TertiaryColorHex  string
+	}
 
-    data := TemplateData{
-        Shop:              shop,
-        PrimaryColorHex:   fmt.Sprintf("#%02x%02x%02x", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
-        SecondaryColorHex: fmt.Sprintf("#%02x%02x%02x", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
-        TertiaryColorHex:  fmt.Sprintf("#%02x%02x%02x", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
-    }
+	data := TemplateData{
+		Shop:              shop,
+		PrimaryColorHex:   fmt.Sprintf("#%02x%02x%02x", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
+		SecondaryColorHex: fmt.Sprintf("#%02x%02x%02x", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
+		TertiaryColorHex:  fmt.Sprintf("#%02x%02x%02x", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
+	}
 
-    // Create index.html file
-    indexFile, err := os.Create(filepath.Join(outputDir, "src", "index.html"))
-    if err != nil {
-        return fmt.Errorf("failed to create index.html file: %w", err)
-    }
-    defer indexFile.Close()
+	// Create index.html file
+	indexFile, err := os.Create(filepath.Join(outputDir, "src", "index.html"))
+	if err != nil {
+		return fmt.Errorf("failed to create index.html file: %w", err)
+	}
+	defer indexFile.Close()
 
-    // Parse and execute the template
-    t, err := template.New("shop").Parse(tmpl)
-    if err != nil {
-        return fmt.Errorf("failed to parse template: %w", err)
-    }
+	// Parse and execute the template
+	t, err := template.New("shop").Parse(tmpl)
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
+	}
 
-    if err := t.Execute(indexFile, data); err != nil {
-        return fmt.Errorf("failed to write index.html file: %w", err)
-    }
+	if err := t.Execute(indexFile, data); err != nil {
+		return fmt.Errorf("failed to write index.html file: %w", err)
+	}
 
-    // Save shop data as JSON
-    shopData, err := json.MarshalIndent(shop, "", "    ")
-    if err != nil {
-        return fmt.Errorf("failed to marshal shop data: %w", err)
-    }
+	// Save shop data as JSON
+	shopData, err := json.MarshalIndent(shop, "", "    ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal shop data: %w", err)
+	}
 
-    if err := os.WriteFile(filepath.Join(outputDir, "shop.json"), shopData, 0644); err != nil {
-        return fmt.Errorf("failed to save shop data: %w", err)
-    }
+	if err := os.WriteFile(filepath.Join(outputDir, "shop.json"), shopData, 0644); err != nil {
+		return fmt.Errorf("failed to save shop data: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 func copyFile(src, dst string) error {
-    log.Printf("Copying file from %s to %s", src, dst)
+	log.Printf("Copying file from %s to %s", src, dst)
 
-    // Open source file
-    sourceFile, err := os.Open(src)
-    if err != nil {
-        log.Printf("Failed to open source file: %v", err)
-        return fmt.Errorf("failed to open source file: %w", err)
-    }
-    defer sourceFile.Close()
+	// Open source file
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		log.Printf("Failed to open source file: %v", err)
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer sourceFile.Close()
 
-    // Create destination file
-    destFile, err := os.Create(dst)
-    if err != nil {
-        log.Printf("Failed to create destination file: %v", err)
-        return fmt.Errorf("failed to create destination file: %w", err)
-    }
-    defer func() {
-        if err := destFile.Close(); err != nil {
-            log.Printf("Error closing destination file: %v", err)
-        }
-    }()
+	// Create destination file
+	destFile, err := os.Create(dst)
+	if err != nil {
+		log.Printf("Failed to create destination file: %v", err)
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer func() {
+		if err := destFile.Close(); err != nil {
+			log.Printf("Error closing destination file: %v", err)
+		}
+	}()
 
-    // Copy the contents
-    written, err := io.Copy(destFile, sourceFile)
-    if err != nil {
-        log.Printf("Failed to copy file contents: %v", err)
-        return fmt.Errorf("failed to copy file contents: %w", err)
-    }
+	// Copy the contents
+	written, err := io.Copy(destFile, sourceFile)
+	if err != nil {
+		log.Printf("Failed to copy file contents: %v", err)
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
 
-    // Verify file size
-    sourceInfo, err := os.Stat(src)
-    if err != nil {
-        log.Printf("Failed to get source file info: %v", err)
-        return fmt.Errorf("failed to verify file size: %w", err)
-    }
+	// Verify file size
+	sourceInfo, err := os.Stat(src)
+	if err != nil {
+		log.Printf("Failed to get source file info: %v", err)
+		return fmt.Errorf("failed to verify file size: %w", err)
+	}
 
-    if written != sourceInfo.Size() {
-        log.Printf("File size mismatch: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
-        return fmt.Errorf("incomplete file copy: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
-    }
+	if written != sourceInfo.Size() {
+		log.Printf("File size mismatch: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
+		return fmt.Errorf("incomplete file copy: wrote %d bytes, expected %d bytes", written, sourceInfo.Size())
+	}
 
-    log.Printf("Successfully copied %d bytes", written)
-    return nil
+	log.Printf("Successfully copied %d bytes", written)
+	return nil
 }
 
 type ColorButton struct {
-    widget.Button
-    currentColor color.RGBA
-    window       fyne.Window
-    onSelected   func(color.Color)
-    background   *canvas.Rectangle
+	widget.Button
+	currentColor color.RGBA
+	window       fyne.Window
+	onSelected   func(color.Color)
+	background   *canvas.Rectangle
 }
 
 func NewColorButton(label string, initialColor color.RGBA, window fyne.Window, onSelected func(color.Color)) *ColorButton {
-    btn := &ColorButton{
-        currentColor: initialColor,
-        window:       window,
-        onSelected:   onSelected,
-        background:   canvas.NewRectangle(initialColor),
-    }
-    btn.ExtendBaseWidget(btn)
-    btn.Importance = widget.MediumImportance
-    btn.SetText(label + "Click to Change")
-    return btn
+	btn := &ColorButton{
+		currentColor: initialColor,
+		window:       window,
+		onSelected:   onSelected,
+		background:   canvas.NewRectangle(initialColor),
+	}
+	btn.ExtendBaseWidget(btn)
+	btn.Importance = widget.MediumImportance
+	btn.SetText(label + "Click to Change")
+	return btn
 }
 
 func (c *ColorButton) CreateRenderer() fyne.WidgetRenderer {
-    background := canvas.NewRectangle(c.currentColor)
+	background := canvas.NewRectangle(c.currentColor)
 
-    // Create text with initial color based on background
-    text := canvas.NewText(c.Text, color.Black) // Default to black, will be updated based on background
-    text.Alignment = fyne.TextAlignCenter
-    text.TextStyle = fyne.TextStyle{Bold: true}
+	// Create text with initial color based on background
+	text := canvas.NewText(c.Text, color.Black) // Default to black, will be updated based on background
+	text.Alignment = fyne.TextAlignCenter
+	text.TextStyle = fyne.TextStyle{Bold: true}
 
-    // Calculate initial text color
-    r, g, b := float32(c.currentColor.R)/255, float32(c.currentColor.G)/255, float32(c.currentColor.B)/255
-    luminance := 0.2126*r + 0.7152*g + 0.0722*b
-    if luminance > 0.5 {
-        text.Color = color.Black
-    } else {
-        text.Color = color.White
-    }
+	// Calculate initial text color
+	r, g, b := float32(c.currentColor.R)/255, float32(c.currentColor.G)/255, float32(c.currentColor.B)/255
+	luminance := 0.2126*r + 0.7152*g + 0.0722*b
+	if luminance > 0.5 {
+		text.Color = color.Black
+	} else {
+		text.Color = color.White
+	}
 
-    objects := []fyne.CanvasObject{background, text}
+	objects := []fyne.CanvasObject{background, text}
 
-    return &colorButtonRenderer{
-        button:     c,
-        background: background,
-        text:       text,
-        objects:    objects,
-    }
+	return &colorButtonRenderer{
+		button:     c,
+		background: background,
+		text:       text,
+		objects:    objects,
+	}
 }
 
 type colorButtonRenderer struct {
-    button     *ColorButton
-    background *canvas.Rectangle
-    text       *canvas.Text
-    objects    []fyne.CanvasObject
+	button     *ColorButton
+	background *canvas.Rectangle
+	text       *canvas.Text
+	objects    []fyne.CanvasObject
 }
 
 func (r *colorButtonRenderer) MinSize() fyne.Size {
-    return fyne.NewSize(150, 40) // Set a reasonable minimum size
+	return fyne.NewSize(150, 40) // Set a reasonable minimum size
 }
 
 func (r *colorButtonRenderer) Layout(size fyne.Size) {
-    // Fill the entire button with the background
-    r.background.Resize(size)
-    r.background.Move(fyne.NewPos(0, 0))
+	// Fill the entire button with the background
+	r.background.Resize(size)
+	r.background.Move(fyne.NewPos(0, 0))
 
-    // Center the text
-    textSize := r.text.MinSize()
-    r.text.Resize(textSize)
-    r.text.Move(fyne.NewPos(
-        (size.Width-textSize.Width)/2,
-        (size.Height-textSize.Height)/2,
-    ))
+	// Center the text
+	textSize := r.text.MinSize()
+	r.text.Resize(textSize)
+	r.text.Move(fyne.NewPos(
+		(size.Width-textSize.Width)/2,
+		(size.Height-textSize.Height)/2,
+	))
 }
 
 func (r *colorButtonRenderer) Objects() []fyne.CanvasObject {
-    return r.objects
+	return r.objects
 }
 
 func (r *colorButtonRenderer) Refresh() {
-    // Update background color
-    r.background.FillColor = r.button.currentColor
-    r.background.Refresh()
+	// Update background color
+	r.background.FillColor = r.button.currentColor
+	r.background.Refresh()
 
-    // Update text content
-    r.text.Text = r.button.Text
+	// Update text content
+	r.text.Text = r.button.Text
 
-    // Update text color based on background brightness
-    red := float32(r.button.currentColor.R) / 255
-    green := float32(r.button.currentColor.G) / 255
-    blue := float32(r.button.currentColor.B) / 255
-    luminance := 0.2126*red + 0.7152*green + 0.0722*blue
-    if luminance > 0.5 {
-        r.text.Color = color.Black
-    } else {
-        r.text.Color = color.White
-    }
+	// Update text color based on background brightness
+	red := float32(r.button.currentColor.R) / 255
+	green := float32(r.button.currentColor.G) / 255
+	blue := float32(r.button.currentColor.B) / 255
+	luminance := 0.2126*red + 0.7152*green + 0.0722*blue
+	if luminance > 0.5 {
+		r.text.Color = color.Black
+	} else {
+		r.text.Color = color.White
+	}
 
-    r.text.Refresh()
+	r.text.Refresh()
 }
 
 func (r *colorButtonRenderer) Destroy() {}
 
 func (c *ColorButton) Tapped(_ *fyne.PointEvent) {
-    // Create color picker with hue style
-    picker := colorpicker.New(200, colorpicker.StyleHue)
+	// Create color picker with hue style
+	picker := colorpicker.New(200, colorpicker.StyleHue)
 
-    // Convert RGBA to NRGBA for the picker
-    nrgba := color.NRGBA{
-        R: c.currentColor.R,
-        G: c.currentColor.G,
-        B: c.currentColor.B,
-        A: c.currentColor.A,
-    }
-    picker.SetColor(nrgba)
+	// Convert RGBA to NRGBA for the picker
+	nrgba := color.NRGBA{
+		R: c.currentColor.R,
+		G: c.currentColor.G,
+		B: c.currentColor.B,
+		A: c.currentColor.A,
+	}
+	picker.SetColor(nrgba)
 
-    // Create preview rectangle
-    preview := canvas.NewRectangle(nrgba)
-    preview.Resize(fyne.NewSize(50, 50))
+	// Create preview rectangle
+	preview := canvas.NewRectangle(nrgba)
+	preview.Resize(fyne.NewSize(50, 50))
 
-    // Create RGB entry fields
-    rEntry := widget.NewEntry()
-    gEntry := widget.NewEntry()
-    bEntry := widget.NewEntry()
-    aEntry := widget.NewEntry()
+	// Create RGB entry fields
+	rEntry := widget.NewEntry()
+	gEntry := widget.NewEntry()
+	bEntry := widget.NewEntry()
+	aEntry := widget.NewEntry()
 
-    rEntry.SetText(fmt.Sprintf("%d", c.currentColor.R))
-    gEntry.SetText(fmt.Sprintf("%d", c.currentColor.G))
-    bEntry.SetText(fmt.Sprintf("%d", c.currentColor.B))
-    aEntry.SetText(fmt.Sprintf("%d", c.currentColor.A))
+	rEntry.SetText(fmt.Sprintf("%d", c.currentColor.R))
+	gEntry.SetText(fmt.Sprintf("%d", c.currentColor.G))
+	bEntry.SetText(fmt.Sprintf("%d", c.currentColor.B))
+	aEntry.SetText(fmt.Sprintf("%d", c.currentColor.A))
 
-    var selectedColor color.Color
+	var selectedColor color.Color
 
-    // Update both picker and entries when either changes
-    updateFromPicker := func(clr color.Color) {
-        selectedColor = clr
+	// Update both picker and entries when either changes
+	updateFromPicker := func(clr color.Color) {
+		selectedColor = clr
 
-        // Convert to NRGBA which is what the picker uses
-        nrgba, ok := clr.(color.NRGBA)
-        if !ok {
-            fmt.Printf("Error: color is not NRGBA\n")
-            return
-        }
+		// Convert to NRGBA which is what the picker uses
+		nrgba, ok := clr.(color.NRGBA)
+		if !ok {
+			fmt.Printf("Error: color is not NRGBA\n")
+			return
+		}
 
-        preview.FillColor = nrgba
-        preview.Refresh()
+		preview.FillColor = nrgba
+		preview.Refresh()
 
-        // Update RGB entry fields with the new color values
-        rEntry.SetText(fmt.Sprintf("%d", nrgba.R))
-        gEntry.SetText(fmt.Sprintf("%d", nrgba.G))
-        bEntry.SetText(fmt.Sprintf("%d", nrgba.B))
-        aEntry.SetText(fmt.Sprintf("%d", nrgba.A))
-    }
+		// Update RGB entry fields with the new color values
+		rEntry.SetText(fmt.Sprintf("%d", nrgba.R))
+		gEntry.SetText(fmt.Sprintf("%d", nrgba.G))
+		bEntry.SetText(fmt.Sprintf("%d", nrgba.B))
+		aEntry.SetText(fmt.Sprintf("%d", nrgba.A))
+	}
 
-    updateFromEntry := func(string) {
-        r, _ := strconv.Atoi(rEntry.Text)
-        g, _ := strconv.Atoi(gEntry.Text)
-        b, _ := strconv.Atoi(bEntry.Text)
-        a, _ := strconv.Atoi(aEntry.Text)
+	updateFromEntry := func(string) {
+		r, _ := strconv.Atoi(rEntry.Text)
+		g, _ := strconv.Atoi(gEntry.Text)
+		b, _ := strconv.Atoi(bEntry.Text)
+		a, _ := strconv.Atoi(aEntry.Text)
 
-        // Clamp values between 0 and 255
-        r = clamp(r, 0, 255)
-        g = clamp(g, 0, 255)
-        b = clamp(b, 0, 255)
-        a = clamp(a, 0, 255)
+		// Clamp values between 0 and 255
+		r = clamp(r, 0, 255)
+		g = clamp(g, 0, 255)
+		b = clamp(b, 0, 255)
+		a = clamp(a, 0, 255)
 
-        newColor := color.NRGBA{
-            R: uint8(r),
-            G: uint8(g),
-            B: uint8(b),
-            A: uint8(a),
-        }
-        picker.SetColor(newColor)
-        preview.FillColor = newColor
-        preview.Refresh()
-        selectedColor = newColor
-    }
+		newColor := color.NRGBA{
+			R: uint8(r),
+			G: uint8(g),
+			B: uint8(b),
+			A: uint8(a),
+		}
+		picker.SetColor(newColor)
+		preview.FillColor = newColor
+		preview.Refresh()
+		selectedColor = newColor
+	}
 
-    picker.SetOnChanged(updateFromPicker)
-    rEntry.OnChanged = updateFromEntry
-    gEntry.OnChanged = updateFromEntry
-    bEntry.OnChanged = updateFromEntry
-    aEntry.OnChanged = updateFromEntry
+	picker.SetOnChanged(updateFromPicker)
+	rEntry.OnChanged = updateFromEntry
+	gEntry.OnChanged = updateFromEntry
+	bEntry.OnChanged = updateFromEntry
+	aEntry.OnChanged = updateFromEntry
 
-    // Create form for RGB inputs
-    form := widget.NewForm(
-        widget.NewFormItem("R", rEntry),
-        widget.NewFormItem("G", gEntry),
-        widget.NewFormItem("B", bEntry),
-        widget.NewFormItem("A", aEntry),
-    )
+	// Create form for RGB inputs
+	form := widget.NewForm(
+		widget.NewFormItem("R", rEntry),
+		widget.NewFormItem("G", gEntry),
+		widget.NewFormItem("B", bEntry),
+		widget.NewFormItem("A", aEntry),
+	)
 
-    // Create container with preview and form
-    rightContainer := container.NewVBox(
-        preview,
-        form,
-    )
+	// Create container with preview and form
+	rightContainer := container.NewVBox(
+		preview,
+		form,
+	)
 
-    // Create main container
-    content := container.NewHBox(
-        picker,
-        rightContainer,
-    )
+	// Create main container
+	content := container.NewHBox(
+		picker,
+		rightContainer,
+	)
 
-    // Show dialog
-    dialog.ShowCustomConfirm("Select Color", "Apply", "Cancel", content, func(apply bool) {
-        if apply && selectedColor != nil {
-            // Convert the selected color to RGBA
-            nrgba := selectedColor.(color.NRGBA)
-            c.currentColor = color.RGBA{
-                R: nrgba.R,
-                G: nrgba.G,
-                B: nrgba.B,
-                A: nrgba.A,
-            }
-            if c.onSelected != nil {
-                c.onSelected(c.currentColor)
-            }
-            c.Refresh()
-        }
-    }, c.window)
+	// Show dialog
+	dialog.ShowCustomConfirm("Select Color", "Apply", "Cancel", content, func(apply bool) {
+		if apply && selectedColor != nil {
+			// Convert the selected color to RGBA
+			nrgba := selectedColor.(color.NRGBA)
+			c.currentColor = color.RGBA{
+				R: nrgba.R,
+				G: nrgba.G,
+				B: nrgba.B,
+				A: nrgba.A,
+			}
+			if c.onSelected != nil {
+				c.onSelected(c.currentColor)
+			}
+			c.Refresh()
+		}
+	}, c.window)
 }
 
 func clamp(val, min, max int) int {
-    if val < min {
-        return min
-    }
-    if val > max {
-        return max
-    }
-    return val
+	if val < min {
+		return min
+	}
+	if val > max {
+		return max
+	}
+	return val
 }
 
 // Authentication related functions
 func isUserAuthenticated() bool {
-    authMutex.RLock()
-    defer authMutex.RUnlock()
-    return currentUser != nil
+	authMutex.RLock()
+	defer authMutex.RUnlock()
+	return currentUser != nil
 }
 
 func authenticateWithEthereum(address, message, signature string) {
-    if !common.IsHexAddress(address) {
-        dialog.ShowError(fmt.Errorf("invalid Ethereum address"), mainWindow)
-        return
-    }
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in authentication: %v", r)
+			// Try to show an error dialog
+			if mainApp != nil {
+				errWin := mainApp.NewWindow("Error")
+				errWin.Resize(fyne.NewSize(300, 100))
+				errWin.SetContent(widget.NewLabel("An error occurred. Please restart the application."))
+				errWin.Show()
+			}
+		}
+	}()
 
-    // Create SIWE message
-    siweMsg := auth.CreateSIWEMessage(address)
+	if !common.IsHexAddress(address) {
+		log.Printf("Invalid Ethereum address attempted: %s", address)
+		dialog.ShowError(fmt.Errorf("invalid Ethereum address"), mainWindow)
+		return
+	}
 
-    // Verify the signature
-    if !auth.VerifySignature(siweMsg, signature, address) {
-        dialog.ShowError(fmt.Errorf("invalid signature"), mainWindow)
-        return
-    }
+	// Create SIWE message
+	siweMsg := auth.CreateSIWEMessage(address)
 
-    // Set authenticated user
-    authMutex.Lock()
-    currentUser = &auth.AuthenticatedUser{
-        Address:         address,
-        SignedMessage:   message,
-        Signature:       signature,
-        AuthenticatedAt: time.Now(),
-    }
-    authMutex.Unlock()
+	// Verify the signature
+	if !auth.VerifySignature(siweMsg, signature, address) {
+		log.Printf("Signature verification failed for address: %s", address)
+		dialog.ShowError(fmt.Errorf("invalid signature"), mainWindow)
+		return
+	}
 
-    // Close the current window if it exists
-    if mainWindow != nil {
-        mainWindow.Close()
-        mainWindow = nil
-    }
+	log.Printf("Signature verified successfully")
 
-    // Show success message and then open main window
-    successWin := mainApp.NewWindow("Success")
-    successWin.Resize(fyne.NewSize(300, 100))
-    successWin.SetContent(container.NewVBox(
-        widget.NewLabel("Successfully authenticated with Ethereum"),
-        widget.NewButton("Continue", func() {
-            successWin.Close()
-            time.AfterFunc(100*time.Millisecond, func() {
-                showMainWindow()
-            })
-        }),
-    ))
-    successWin.Show()
+	// Set authenticated user
+	authMutex.Lock()
+	currentUser = &auth.AuthenticatedUser{
+		Address:         address,
+		SignedMessage:   message,
+		Signature:       signature,
+		AuthenticatedAt: time.Now(),
+	}
+	authMutex.Unlock()
+
+	// Close the current window if it exists
+	if mainWindow != nil {
+		log.Printf("Closing main window")
+		mainWindow.Close()
+		mainWindow = nil
+	}
+
+	// Show main window directly
+	log.Printf("Opening main window...")
+	safeShowMainWindow()
 }
 
 func clearCurrentShop() error {
-    // Create a new empty shop with just the owner address
-    newShop := &Shop{
-        OwnerAddress: currentUser.Address,
-        Items:        []Item{},
-    }
-    return saveCurrentShop(newShop)
+	// Create a new empty shop with just the owner address
+	authMutex.RLock()
+	userAddress := currentUser.Address
+	authMutex.RUnlock()
+	
+	newShop := &Shop{
+		OwnerAddress: userAddress,
+		Items:        []Item{},
+	}
+	return saveCurrentShop(newShop)
 }
 
 func saveCurrentShop(shop *Shop) error {
-    data, err := json.MarshalIndent(shop, "", "    ")
-    if err != nil {
-        return fmt.Errorf("failed to marshal shop data: %w", err)
-    }
+	data, err := json.MarshalIndent(shop, "", "    ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal shop data: %w", err)
+	}
 
-    if err := os.WriteFile("current_shop.json", data, 0644); err != nil {
-        return fmt.Errorf("failed to save current shop: %w", err)
-    }
+	if err := os.WriteFile("current_shop.json", data, 0644); err != nil {
+		return fmt.Errorf("failed to save current shop: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 func loadCurrentShop() (*Shop, error) {
-    data, err := os.ReadFile("current_shop.json")
-    if err != nil {
-        if os.IsNotExist(err) {
-            // Return a new shop if the file doesn't exist
-            return &Shop{
-                OwnerAddress: currentUser.Address,
-            }, nil
-        }
-        return nil, fmt.Errorf("failed to read current shop: %w", err)
-    }
+	// Try to load shop from file
+	data, err := os.ReadFile("current_shop.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If file doesn't exist, return a new shop
+			authMutex.RLock()
+			userAddress := currentUser.Address
+			authMutex.RUnlock()
+			
+			return &Shop{
+				OwnerAddress: userAddress,
+				Items:        []Item{},
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to read current shop: %w", err)
+	}
 
-    var shop Shop
-    if err := json.Unmarshal(data, &shop); err != nil {
-        return nil, fmt.Errorf("failed to parse current shop: %w", err)
-    }
+	var shop Shop
+	if err := json.Unmarshal(data, &shop); err != nil {
+		return nil, fmt.Errorf("failed to parse current shop: %w", err)
+	}
 
-    return &shop, nil
+	return &shop, nil
 }
