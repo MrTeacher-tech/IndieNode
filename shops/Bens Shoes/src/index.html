@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bens Shoes</title>
+    <style>
+        :root {
+            --primary-color: #000000;
+            --secondary-color: #000000;
+            --tertiary-color: #000000;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--tertiary-color);
+        }
+        .header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .owner-address {
+            font-family: monospace;
+            background-color: var(--secondary-color);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .shop-info {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .items {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .item {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .item img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .logo {
+            max-width: 200px;
+            height: auto;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        
+        <img src="/Users/andrewverrilli/Desktop/BensShoeStore/bens-shoe-store-logo.png" alt="Bens Shoes Logo" class="logo">
+        
+        <h1>Bens Shoes</h1>
+        <div class="owner-address">Owner: 0xd21386B302d0e51044246B50e18A2F61673FceC9</div>
+    </div>
+    
+    <div class="shop-info">
+        <h2>About Us</h2>
+        <p></p>
+        <p><strong>Location:</strong> </p>
+        <p><strong>Contact:</strong>  | </p>
+    </div>
+
+    <h2>Our Items</h2>
+    <div class="items">
+        
+        <div class="item">
+            <h3>Nikes</h3>
+            
+            <img src="/Users/andrewverrilli/Desktop/BensShoeStore/red-nike.jpg" alt="Bens Shoes">
+            
+            <p></p>
+            <p><strong>Price:</strong> $22</p>
+        </div>
+        
+    </div>
+</body>
+</html>

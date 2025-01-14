@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"image/color"
 	_ "image/gif"  // Register GIF format
 	_ "image/jpeg" // Register JPEG format
@@ -15,15 +14,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
+	"text/template"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 	"github.com/lusingander/colorpicker"
+
+	"github.com/ethereum/go-ethereum/common"
+
+	"shopCreator/auth"
+	"shopCreator/db" // Import the database package
 )
 
 // App configuration
@@ -34,6 +42,7 @@ const (
 
 type Shop struct {
 	ID             string
+	OwnerAddress   string
 	Name           string
 	Description    string
 	Location       string
@@ -58,6 +67,12 @@ var (
 	shopsContainer *fyne.Container
 	mainApp        fyne.App
 	mainWindow     fyne.Window
+)
+
+// Global variables for authentication
+var (
+	currentUser *auth.AuthenticatedUser
+	authMutex   sync.RWMutex
 )
 
 func updateShopsList(window fyne.Window) {
@@ -142,7 +157,12 @@ func showShopPreview(_ fyne.App, shopName, shopPath string) {
 }
 
 func main() {
-	// Initialize Fyne application with a unique ID
+	// Initialize database
+	if err := db.InitDB(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.DB.Close()
+
 	mainApp = app.New()
 
 	// Set application icon
@@ -151,29 +171,148 @@ func main() {
 		mainApp.SetIcon(icon)
 	}
 
-	mainWindow = mainApp.NewWindow("Shop Creator")
-	mainWindow.Resize(fyne.NewSize(appWidth, appHeight))
+	// Create sign-in window
+	signInWindow := mainApp.NewWindow("IndieNode - Sign In")
+	signInWindow.Resize(fyne.NewSize(400, 500)) // Made taller to accommodate logo
 
-	// Create shops directory if it doesn't exist
-	if err := os.MkdirAll("shops", 0755); err != nil {
-		dialog.ShowError(err, mainWindow)
-		return
-	}
+	// Load and create logo image
+	logo := canvas.NewImageFromFile("IndieNode_assets/indieNode_logo.png")
+	logo.SetMinSize(fyne.NewSize(200, 200)) // Set appropriate size for logo
+	logo.FillMode = canvas.ImageFillContain
 
-	// Create tabs container
-	tabs := container.NewAppTabs(
-		container.NewTabItem("Create Shop", showShopCreator(mainWindow, nil)),
-		container.NewTabItem("View Shops", showShopList(mainWindow, mainApp)),
+	// Create centered welcome text
+	welcomeText := widget.NewLabelWithStyle(
+		"Welcome to IndieNode",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Bold: true},
 	)
 
-	mainWindow.SetContent(tabs)
-	mainWindow.ShowAndRun()
+	address := widget.NewEntry()
+	address.SetPlaceHolder("Enter Ethereum Address")
+
+	signInBtn := widget.NewButton("Sign In with Ethereum", func() {
+		if address.Text == "" {
+			dialog.ShowError(fmt.Errorf("please enter an Ethereum address"), signInWindow)
+			return
+		}
+
+		// Create SIWE message
+		siweMsg := auth.CreateSIWEMessage(address.Text)
+		formattedMsg := siweMsg.FormatMessage()
+
+		// Show message for signing
+		dialog.ShowCustomConfirm("Sign Message", "Sign", "Cancel",
+			widget.NewTextGridFromString(formattedMsg),
+			func(sign bool) {
+				if !sign {
+					return
+				}
+
+				// For development, we'll simulate a successful signature
+				// In production, this would interact with a wallet
+				simulatedSignature := "0x123..." // Placeholder signature
+
+				// Verify the signature
+				verified := auth.VerifySignature(siweMsg, simulatedSignature, address.Text)
+
+				if !verified {
+					log.Printf("Signature verification failed")
+					dialog.ShowError(fmt.Errorf("invalid signature"), signInWindow)
+					return
+				}
+
+				log.Printf("Signature verified successfully")
+
+				// Set the current user
+				currentUser = &auth.AuthenticatedUser{
+					Address:         address.Text,
+					SignedMessage:   formattedMsg,
+					Signature:       simulatedSignature,
+					AuthenticatedAt: time.Now(),
+				}
+
+				// Close the sign-in window
+				signInWindow.Close()
+
+				// Show the main window
+				log.Printf("Opening main window...")
+				showMainWindow()
+			},
+			signInWindow,
+		)
+	})
+
+	content := container.NewVBox(
+		container.NewHBox(layout.NewSpacer(), logo, layout.NewSpacer()),
+		welcomeText,
+		widget.NewLabel("Enter your Ethereum address:"),
+		address,
+		signInBtn,
+	)
+
+	signInWindow.SetContent(content)
+	signInWindow.Show()
+	mainApp.Run()
+}
+
+// showMainWindow creates and shows the main shop management window
+func showMainWindow() {
+	mainWindow = mainApp.NewWindow("IndieNode - Shop Manager")
+	mainWindow.Resize(fyne.NewSize(appWidth, appHeight))
+
+	// Create header with Ethereum address
+	addressLabel := widget.NewLabelWithStyle(
+		fmt.Sprintf("Connected: %s", currentUser.Address),
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Bold: true},
+	)
+
+	// Create tabs
+	tabs := container.NewAppTabs(
+		container.NewTabItem("My Shops", createShopsTab()),
+		container.NewTabItem("Create Shop", showShopCreator(mainWindow, nil)),
+	)
+
+	// Create main content
+	content := container.NewVBox(
+		container.NewHBox(
+			layout.NewSpacer(),
+			addressLabel,
+			layout.NewSpacer(),
+		),
+		widget.NewSeparator(),
+		tabs,
+	)
+
+	mainWindow.SetContent(content)
+	mainWindow.Show()
+}
+
+// createShopsTab creates the tab that shows the list of shops
+func createShopsTab() fyne.CanvasObject {
+	content := container.NewVBox()
+
+	// Initialize shops container
+	shopsContainer = container.NewVBox()
+
+	// Initial shop list load
+	updateShopsList(mainWindow)
+
+	content.Add(widget.NewLabel("Your Shops"))
+	content.Add(shopsContainer)
+
+	return content
 }
 
 func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
-	shop := &Shop{}
+	var shop Shop
 	if existingShop != nil {
-		shop = existingShop
+		shop = *existingShop
+	} else {
+		shop = Shop{
+			ID:           fmt.Sprintf("shop_%d", time.Now().Unix()),
+			OwnerAddress: currentUser.Address, // Set owner address for new shops
+		}
 	}
 
 	// Track original image paths and their intended relative paths
@@ -479,7 +618,7 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 
 		// Create shop directory and generate shop
 		shopDir := filepath.Join("shops", shop.Name)
-		if err := generateShop(shop, shopDir); err != nil {
+		if err := generateShop(&shop, shopDir); err != nil {
 			dialog.ShowError(err, window)
 			return
 		}
@@ -497,7 +636,20 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 		),
 	)
 
+	// Create header with owner's Ethereum address
+	ownerLabel := widget.NewLabelWithStyle(
+		fmt.Sprintf("Shop Owner: %s", shop.OwnerAddress),
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Bold: true},
+	)
+
 	content := container.NewVBox(
+		container.NewHBox(
+			layout.NewSpacer(),
+			ownerLabel,
+			layout.NewSpacer(),
+		),
+		widget.NewSeparator(),
 		shopDetailsBox,
 		widget.NewSeparator(),
 		widget.NewLabel("Add New Item:"),
@@ -543,21 +695,6 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 	return container.NewVScroll(content)
 }
 
-func showShopList(window fyne.Window, app fyne.App) fyne.CanvasObject {
-	// Initialize global shopsContainer
-	shopsContainer = container.NewVBox()
-
-	// Initial shop list load
-	updateShopsList(window)
-
-	content := container.NewVBox(
-		widget.NewLabel("Your Shops"),
-		shopsContainer,
-	)
-
-	return content
-}
-
 func loadShop(shopName string) (*Shop, error) {
 	shopFile := filepath.Join("shops", shopName, "shop.json")
 	data, err := os.ReadFile(shopFile)
@@ -581,22 +718,141 @@ func hexToColor(hex string) color.RGBA {
 }
 
 func generateShop(shop *Shop, outputDir string) error {
-	// Step 1: Create the shop directory and its subdirectories
-	srcDir := filepath.Join(outputDir, "src")
-	assetsDir := filepath.Join(outputDir, "assets")
-	imagesDir := filepath.Join(outputDir, "assets", "images")
-	logosDir := filepath.Join(outputDir, "assets", "logos")
+	// Create necessary directories
+	if err := os.MkdirAll(filepath.Join(outputDir, "src"), 0755); err != nil {
+		return err
+	}
 
-	for _, dir := range []string{outputDir, srcDir, assetsDir, imagesDir, logosDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
-		}
+	// Create index.html template
+	tmpl := `<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.Name}}</title>
+    <style>
+        :root {
+            --primary-color: {{.PrimaryColorHex}};
+            --secondary-color: {{.SecondaryColorHex}};
+            --tertiary-color: {{.TertiaryColorHex}};
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--tertiary-color);
+        }
+        .header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .owner-address {
+            font-family: monospace;
+            background-color: var(--secondary-color);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .shop-info {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .items {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .item {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .item img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .logo {
+            max-width: 200px;
+            height: auto;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        {{if .LogoPath}}
+        <img src="{{.LogoPath}}" alt="{{.Name}} Logo" class="logo">
+        {{end}}
+        <h1>{{.Name}}</h1>
+        <div class="owner-address">Owner: {{.OwnerAddress}}</div>
+    </div>
+    
+    <div class="shop-info">
+        <h2>About Us</h2>
+        <p>{{.Description}}</p>
+        <p><strong>Location:</strong> {{.Location}}</p>
+        <p><strong>Contact:</strong> {{.Email}} | {{.Phone}}</p>
+    </div>
+
+    <h2>Our Items</h2>
+    <div class="items">
+        {{range .Items}}
+        <div class="item">
+            <h3>{{.Name}}</h3>
+            {{range .PhotoPaths}}
+            <img src="{{.}}" alt="{{$.Name}}">
+            {{end}}
+            <p>{{.Description}}</p>
+            <p><strong>Price:</strong> ${{.Price}}</p>
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>`
+
+	// Create template data with hex color values
+	type TemplateData struct {
+		*Shop
+		PrimaryColorHex   string
+		SecondaryColorHex string
+		TertiaryColorHex  string
+	}
+
+	data := TemplateData{
+		Shop:              shop,
+		PrimaryColorHex:   fmt.Sprintf("#%02x%02x%02x", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
+		SecondaryColorHex: fmt.Sprintf("#%02x%02x%02x", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
+		TertiaryColorHex:  fmt.Sprintf("#%02x%02x%02x", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
+	}
+
+	// Create index.html file
+	indexFile, err := os.Create(filepath.Join(outputDir, "src", "index.html"))
+	if err != nil {
+		return fmt.Errorf("failed to create index.html file: %w", err)
+	}
+	defer indexFile.Close()
+
+	// Parse and execute the template
+	t, err := template.New("shop").Parse(tmpl)
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	if err := t.Execute(indexFile, data); err != nil {
+		return fmt.Errorf("failed to write index.html file: %w", err)
 	}
 
 	// Step 2: Copy logo if it exists (from source path)
 	if shop.LogoPath != "" {
 		fileName := filepath.Base(shop.LogoPath)
-		destPath := filepath.Join(logosDir, fileName)
+		destPath := filepath.Join(outputDir, "assets", "logos", fileName)
 
 		if err := copyFile(shop.LogoPath, destPath); err != nil {
 			return fmt.Errorf("failed to copy logo: %w", err)
@@ -611,7 +867,7 @@ func generateShop(shop *Shop, outputDir string) error {
 		var newPaths []string
 		for _, photoPath := range item.PhotoPaths {
 			fileName := filepath.Base(photoPath)
-			destPath := filepath.Join(imagesDir, fileName)
+			destPath := filepath.Join(outputDir, "assets", "images", fileName)
 
 			if err := copyFile(photoPath, destPath); err != nil {
 				return fmt.Errorf("failed to copy photo %s: %w", fileName, err)
@@ -631,49 +887,6 @@ func generateShop(shop *Shop, outputDir string) error {
 
 	if err := os.WriteFile(filepath.Join(outputDir, "shop.json"), shopData, 0644); err != nil {
 		return fmt.Errorf("failed to save shop data: %w", err)
-	}
-
-	// Step 5: Process templates and generate HTML/CSS
-	// Process CSS template
-	cssTemplate, err := template.ParseFiles(filepath.Join("templates", "basic", "basic.css"))
-	if err != nil {
-		return fmt.Errorf("failed to parse CSS template: %w", err)
-	}
-
-	cssData := struct {
-		PrimaryColor   string
-		SecondaryColor string
-		TertiaryColor  string
-	}{
-		PrimaryColor:   fmt.Sprintf("rgb(%d, %d, %d)", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
-		SecondaryColor: fmt.Sprintf("rgb(%d, %d, %d)", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
-		TertiaryColor:  fmt.Sprintf("rgb(%d, %d, %d)", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
-	}
-
-	cssFile, err := os.Create(filepath.Join(srcDir, "styles.css"))
-	if err != nil {
-		return fmt.Errorf("failed to create CSS file: %w", err)
-	}
-	defer cssFile.Close()
-
-	if err := cssTemplate.Execute(cssFile, cssData); err != nil {
-		return fmt.Errorf("failed to write CSS file: %w", err)
-	}
-
-	// Process HTML template
-	htmlTemplate, err := template.ParseFiles(filepath.Join("templates", "basic", "basic.html"))
-	if err != nil {
-		return fmt.Errorf("failed to parse HTML template: %w", err)
-	}
-
-	htmlFile, err := os.Create(filepath.Join(srcDir, "index.html"))
-	if err != nil {
-		return fmt.Errorf("failed to create HTML file: %w", err)
-	}
-	defer htmlFile.Close()
-
-	if err := htmlTemplate.Execute(htmlFile, shop); err != nil {
-		return fmt.Errorf("failed to write HTML file: %w", err)
 	}
 
 	return nil
@@ -954,4 +1167,39 @@ func clamp(val, min, max int) int {
 		return max
 	}
 	return val
+}
+
+// Authentication related functions
+func isUserAuthenticated() bool {
+	authMutex.RLock()
+	defer authMutex.RUnlock()
+	return currentUser != nil
+}
+
+func authenticateWithEthereum(address, message, signature string) {
+	if !common.IsHexAddress(address) {
+		dialog.ShowError(fmt.Errorf("invalid Ethereum address"), mainWindow)
+		return
+	}
+
+	// Create SIWE message
+	siweMsg := auth.CreateSIWEMessage(address)
+
+	// Verify the signature
+	if !auth.VerifySignature(siweMsg, signature, address) {
+		dialog.ShowError(fmt.Errorf("invalid signature"), mainWindow)
+		return
+	}
+
+	// Set authenticated user
+	authMutex.Lock()
+	currentUser = &auth.AuthenticatedUser{
+		Address:         address,
+		SignedMessage:   message,
+		Signature:       signature,
+		AuthenticatedAt: time.Now(),
+	}
+	authMutex.Unlock()
+
+	dialog.ShowInformation("Success", "Successfully authenticated with Ethereum", mainWindow)
 }
