@@ -69,22 +69,18 @@ type Item struct {
 
 // Global variables for shops list
 var (
-	shopsContainer *fyne.Container
-	mainApp        fyne.App
-	mainWindow     fyne.Window
+	shopsContainer      *fyne.Container
+	mainApp             fyne.App
+	mainWindow          fyne.Window
+	mainIPFSStatusLabel *widget.Label
 )
 
 // Global variables for authentication and IPFS
 var (
 	currentUser *auth.AuthenticatedUser
 	authMutex   sync.RWMutex
-	windowDone  chan struct{} // Channel to coordinate window transitions
 	ipfsManager *ipfs.IPFSManager
 )
-
-func init() {
-	windowDone = make(chan struct{})
-}
 
 func updateShopsList(window fyne.Window) {
 	if shopsContainer == nil {
@@ -100,9 +96,164 @@ func updateShopsList(window fyne.Window) {
 
 	for _, shop := range shops {
 		if shop.IsDir() {
-			name := shop.Name() // Create a new variable for this iteration
+			name := shop.Name()
+			// Check if shop is published by looking for metadata file
+			metadataPath := filepath.Join("shops", name, "ipfs_metadata.json")
+			isPublished := false
+			if _, err := os.Stat(metadataPath); err == nil {
+				isPublished = true
+			}
+
+			// Create publish/info button with appropriate label
+			publishBtn := widget.NewButton(func() string {
+				if isPublished {
+					return "IPFS Info"
+				}
+				return "Publish"
+			}(), func() {
+				shopDir := filepath.Join("shops", name)
+
+				if isPublished {
+					// Show publication info
+					data, err := os.ReadFile(metadataPath)
+					if err != nil {
+						dialog.ShowError(err, window)
+						return
+					}
+
+					var metadata struct {
+						CID     string `json:"cid"`
+						Gateway string `json:"gateway"`
+					}
+					if err := json.Unmarshal(data, &metadata); err != nil {
+						dialog.ShowError(err, window)
+						return
+					}
+
+					infoWindow := mainApp.NewWindow("Shop Publication Info")
+					infoWindow.Resize(fyne.NewSize(500, 300))
+
+					content := container.NewVBox(
+						widget.NewLabelWithStyle("This shop has been published to IPFS:", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+						widget.NewSeparator(),
+						widget.NewLabelWithStyle("CID:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+						widget.NewLabel(metadata.CID),
+						widget.NewSeparator(),
+						widget.NewLabelWithStyle("Gateway URL:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+						widget.NewLabel(metadata.Gateway),
+						widget.NewButton("Open in Browser", func() {
+							var err error
+							switch runtime.GOOS {
+							case "linux":
+								err = exec.Command("xdg-open", metadata.Gateway).Start()
+							case "windows":
+								err = exec.Command("cmd", "/c", "start", metadata.Gateway).Start()
+							case "darwin":
+								err = exec.Command("open", metadata.Gateway).Start()
+							}
+							if err != nil {
+								dialog.ShowError(err, infoWindow)
+							}
+						}),
+						widget.NewSeparator(),
+						widget.NewButton("Unpublish from IPFS", func() {
+							dialog.ShowConfirm("Unpublish Shop",
+								"Are you sure you want to unpublish this shop from IPFS?",
+								func(confirm bool) {
+									if !confirm {
+										return
+									}
+
+									if err := ipfsManager.UnpublishContent(metadata.CID); err != nil {
+										dialog.ShowError(err, infoWindow)
+										return
+									}
+
+									// Remove the metadata file
+									if err := os.Remove(metadataPath); err != nil {
+										dialog.ShowError(err, infoWindow)
+										return
+									}
+
+									dialog.ShowInformation("Success", "Shop unpublished successfully", infoWindow)
+									infoWindow.Close()
+									// Refresh the shops list to update the button
+									updateShopsList(window)
+								}, infoWindow)
+						}),
+						layout.NewSpacer(),
+						widget.NewButton("Close", func() {
+							infoWindow.Close()
+						}),
+					)
+
+					infoWindow.SetContent(container.NewPadded(content))
+					infoWindow.Show()
+					return
+				}
+
+				// Original publish logic...
+				// Check if IPFS daemon is running
+				if !ipfsManager.IsDaemonRunning() {
+					dialog.ShowError(errors.New("IPFS daemon is not running. Please start IPFS daemon in the Settings tab first"), window)
+					return
+				}
+
+				log.Printf("Publishing shop from directory: %s", shopDir)
+
+				// Show progress dialog
+				progress := dialog.NewProgress("Publishing to IPFS", "Publishing your shop...", window)
+				progress.Show()
+
+				// Start publishing process in a goroutine
+				go func() {
+					defer func() {
+						time.Sleep(time.Second)
+						progress.Hide()
+					}()
+
+					// Publish to IPFS
+					cid, err := ipfsManager.AddDirectory(shopDir)
+					if err != nil {
+						dialog.ShowError(fmt.Errorf("failed to publish to IPFS: %w", err), window)
+						return
+					}
+
+					// Get gateway URL
+					gateway := ipfsManager.GetGatewayURL(cid)
+
+					// Save metadata
+					metadata := struct {
+						CID     string `json:"cid"`
+						Gateway string `json:"gateway"`
+					}{
+						CID:     cid,
+						Gateway: gateway,
+					}
+
+					metadataBytes, err := json.MarshalIndent(metadata, "", "    ")
+					if err != nil {
+						dialog.ShowError(fmt.Errorf("failed to create metadata: %w", err), window)
+						return
+					}
+
+					if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
+						dialog.ShowError(fmt.Errorf("failed to save metadata: %w", err), window)
+						return
+					}
+
+					dialog.ShowInformation("Success",
+						fmt.Sprintf("Shop published successfully!\nGateway URL: %s\nCID: %s", gateway, cid),
+						window)
+
+					// Refresh the shops list to update the button
+					updateShopsList(window)
+				}()
+			})
+
 			row := container.NewHBox(
 				widget.NewLabel(name),
+				publishBtn,
 				widget.NewButton("View", func() {
 					shopPath := filepath.Join("shops", name, "src", "index.html")
 					showShopPreview(mainApp, name, shopPath)
@@ -145,7 +296,7 @@ func updateShopsList(window fyne.Window) {
 func showShopPreview(_ fyne.App, shopName, shopPath string) {
 	// Check if the shop exists
 	if _, err := os.Stat(shopPath); err != nil {
-		dialog.ShowError(fmt.Errorf("shop '%s' preview not found: %w", shopName, err), mainWindow)
+		dialog.ShowError(fmt.Errorf("shop '%s' preview not found: %v", shopName, err), mainWindow)
 		return
 	}
 
@@ -184,65 +335,75 @@ func main() {
 
 	// Create sign-in window
 	signInWindow := mainApp.NewWindow("IndieNode - Sign In")
-	signInWindow.Resize(fyne.NewSize(400, 500)) // Made taller to accommodate logo
+	signInWindow.Resize(fyne.NewSize(400, 500))
 
-	// Load and create logo image
-	logo := canvas.NewImageFromFile("IndieNode_assets/indieNode_logo.png")
-	logo.SetMinSize(fyne.NewSize(200, 200)) // Set appropriate size for logo
-	logo.FillMode = canvas.ImageFillContain
+	// Development mode: Auto-sign in
+	const DEV_MODE = true // Toggle this for production
+	if DEV_MODE {
+		testAddress := "0x37eA7944328DF1A4D7ffA6658A002d5C332c8113"
+		// Simulate authentication
+		authenticateWithEthereum(testAddress, "dev_message", "dev_signature")
+		// Don't return here, continue to mainApp.Run()
+	} else {
+		// Regular sign-in UI code...
+		// Load and create logo image
+		logo := canvas.NewImageFromFile("IndieNode_assets/indieNode_logo.png")
+		logo.SetMinSize(fyne.NewSize(200, 200))
 
-	// Create centered welcome text
-	welcomeText := widget.NewLabelWithStyle(
-		"Welcome to IndieNode",
-		fyne.TextAlignCenter,
-		fyne.TextStyle{Bold: true},
-	)
-
-	address := widget.NewEntry()
-	address.SetPlaceHolder("Enter Ethereum Address")
-
-	signInBtn := widget.NewButton("Sign In with Ethereum", func() {
-		if address.Text == "" {
-			dialog.ShowError(fmt.Errorf("please enter an Ethereum address"), signInWindow)
-			return
-		}
-
-		// Create SIWE message
-		siweMsg := auth.CreateSIWEMessage(address.Text)
-		formattedMsg := siweMsg.FormatMessage()
-
-		// Show message for signing
-		dialog.ShowCustomConfirm("Sign Message", "Sign", "Cancel",
-			widget.NewTextGridFromString(formattedMsg),
-			func(sign bool) {
-				if !sign {
-					return
-				}
-
-				// For development, we'll simulate a successful signature
-				// In production, this would interact with a wallet
-				simulatedSignature := "0x123..." // Placeholder signature
-
-				// Authenticate using the dedicated function
-				authenticateWithEthereum(address.Text, formattedMsg, simulatedSignature)
-
-				// Close the sign-in window
-				signInWindow.Close()
-			},
-			signInWindow,
+		// Create centered welcome text
+		welcomeText := widget.NewLabelWithStyle(
+			"Welcome to IndieNode",
+			fyne.TextAlignCenter,
+			fyne.TextStyle{Bold: true},
 		)
-	})
 
-	content := container.NewVBox(
-		container.NewHBox(layout.NewSpacer(), logo, layout.NewSpacer()),
-		welcomeText,
-		widget.NewLabel("Enter your Ethereum address:"),
-		address,
-		signInBtn,
-	)
+		address := widget.NewEntry()
+		address.SetPlaceHolder("Enter Ethereum Address")
 
-	signInWindow.SetContent(content)
-	signInWindow.Show()
+		signInBtn := widget.NewButton("Sign In with Ethereum", func() {
+			if address.Text == "" {
+				dialog.ShowError(fmt.Errorf("please enter an Ethereum address"), signInWindow)
+				return
+			}
+
+			// Create SIWE message
+			siweMsg := auth.CreateSIWEMessage(address.Text)
+			formattedMsg := siweMsg.FormatMessage()
+
+			// Show message for signing
+			dialog.ShowCustomConfirm("Sign Message", "Sign", "Cancel",
+				widget.NewTextGridFromString(formattedMsg),
+				func(sign bool) {
+					if !sign {
+						return
+					}
+
+					// For development, we'll simulate a successful signature
+					// In production, this would interact with a wallet
+					simulatedSignature := "0x123..." // Placeholder signature
+
+					// Authenticate using the dedicated function
+					authenticateWithEthereum(address.Text, formattedMsg, simulatedSignature)
+
+					// Close the sign-in window
+					signInWindow.Close()
+				},
+				signInWindow,
+			)
+		})
+
+		content := container.NewVBox(
+			container.NewHBox(layout.NewSpacer(), logo, layout.NewSpacer()),
+			welcomeText,
+			widget.NewLabel("Enter your Ethereum address:"),
+			address,
+			signInBtn,
+		)
+
+		signInWindow.SetContent(content)
+		signInWindow.Show()
+	}
+
 	mainApp.Run()
 }
 
@@ -269,15 +430,25 @@ func showMainWindow() {
 	// Initialize IPFS manager if not already initialized
 	if ipfsManager == nil {
 		var err error
-		ipfsManager, err = ipfs.NewIPFSManager(nil)
+		ipfsManager, err = ipfs.NewIPFSManager(&ipfs.Config{})
 		if err != nil {
 			dialog.ShowError(err, mainWindow)
 			return
 		}
+
+		// Try to connect to existing daemon
+		if err = ipfsManager.InitializeExistingDaemon(); err != nil {
+			log.Printf("No IPFS daemon detected: %v", err)
+		} else {
+			log.Printf("Successfully connected to existing IPFS daemon")
+			if mainIPFSStatusLabel != nil {
+				updateIPFSStatus(mainIPFSStatusLabel, nil)
+			}
+		}
 	}
 
 	// Create IPFS status label
-	ipfsStatusLabel := widget.NewLabelWithStyle(
+	mainIPFSStatusLabel = widget.NewLabelWithStyle(
 		"Checking IPFS status...",
 		fyne.TextAlignCenter,
 		fyne.TextStyle{},
@@ -285,16 +456,7 @@ func showMainWindow() {
 
 	// Update IPFS status
 	go func() {
-		installed, version := ipfsManager.IsIPFSDownloaded()
-		if installed {
-			if version != "" {
-				ipfsStatusLabel.SetText(fmt.Sprintf("IPFS %s Installed", strings.TrimSpace(version)))
-			} else {
-				ipfsStatusLabel.SetText("IPFS Status: Installed")
-			}
-		} else {
-			ipfsStatusLabel.SetText("IPFS Status: Not Installed")
-		}
+		updateIPFSStatus(mainIPFSStatusLabel, nil) // Pass nil for the button since we don't have one in the header
 	}()
 
 	// Create scrollable containers for each tab with proper padding and expansion
@@ -310,10 +472,17 @@ func showMainWindow() {
 		),
 	)
 
+	settingsScroll := container.NewMax(
+		container.NewPadded(
+			container.NewScroll(createSettingsTab()),
+		),
+	)
+
 	// Create tabs with expanded content
 	tabs := container.NewAppTabs(
 		container.NewTabItem("My Shops", shopsScroll),
 		container.NewTabItem("Create Shop", createShopScroll),
+		container.NewTabItem("Settings", settingsScroll),
 	)
 	tabs.SetTabLocation(container.TabLocationTop)
 
@@ -327,7 +496,7 @@ func showMainWindow() {
 			),
 			container.NewHBox(
 				layout.NewSpacer(),
-				ipfsStatusLabel,
+				mainIPFSStatusLabel,
 				layout.NewSpacer(),
 			),
 			widget.NewSeparator(),
@@ -338,6 +507,12 @@ func showMainWindow() {
 
 	mainWindow.SetContent(content)
 	mainWindow.SetOnClosed(func() {
+		// Stop IPFS daemon if it's running
+		if ipfsManager != nil && ipfsManager.IsDaemonRunning() {
+			if err := ipfsManager.StopDaemon(); err != nil {
+				log.Printf("Error stopping IPFS daemon: %v", err)
+			}
+		}
 		mainWindow = nil
 	})
 	mainWindow.Show()
@@ -377,6 +552,92 @@ func createShopsTab() fyne.CanvasObject {
 	return content
 }
 
+func createSettingsTab() fyne.CanvasObject {
+	content := container.NewVBox()
+
+	// Create IPFS Settings section
+	ipfsCard := widget.NewCard("IPFS Settings", "", nil)
+
+	// Create status label for settings
+	statusLabel := widget.NewLabelWithStyle(
+		"Checking IPFS status...",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{},
+	)
+
+	// Add path label
+	pathLabel := widget.NewLabelWithStyle(
+		fmt.Sprintf("IPFS Path: %s", ipfsManager.BinaryPath),
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	// Add address label
+	addressLabel := widget.NewLabelWithStyle(
+		"Node Address: Not Running",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	// Function to update address label
+	updateAddressLabel := func() {
+		if ipfsManager.IsDaemonRunning() {
+			nodeID, addrs, err := ipfsManager.GetNodeInfo()
+			if err == nil && len(addrs) > 0 {
+				// Look for the local API address first
+				for _, addr := range addrs {
+					if strings.Contains(addr, "127.0.0.1") && strings.Contains(addr, "5001") {
+						addressLabel.SetText(fmt.Sprintf("Node Address: %s\nNode ID: %s", addr, nodeID))
+						return
+					}
+				}
+				// If no local address found, use the first available address
+				addressLabel.SetText(fmt.Sprintf("Node Address: %s\nNode ID: %s", addrs[0], nodeID))
+			} else {
+				addressLabel.SetText("Node Address: Error getting address")
+			}
+		} else {
+			addressLabel.SetText("Node Address: Not Running")
+		}
+		addressLabel.Refresh()
+	}
+
+	// Create daemon control button
+	var daemonButton *widget.Button
+	daemonButton = widget.NewButton("Start Daemon", func() {
+		if ipfsManager.IsDaemonRunning() {
+			if err := ipfsManager.StopDaemon(); err != nil {
+				dialog.ShowError(err, mainWindow)
+				return
+			}
+		} else {
+			if err := ipfsManager.StartDaemon(); err != nil {
+				dialog.ShowError(err, mainWindow)
+				return
+			}
+		}
+		// Update status labels and address
+		updateIPFSStatus(statusLabel, daemonButton)
+		updateIPFSStatus(mainIPFSStatusLabel, nil)
+		updateAddressLabel()
+	})
+
+	// Set initial states
+	updateIPFSStatus(statusLabel, daemonButton)
+	updateAddressLabel()
+
+	ipfsCard.SetContent(container.NewVBox(
+		pathLabel,
+		addressLabel,
+		widget.NewSeparator(),
+		statusLabel,
+		daemonButton,
+	))
+
+	content.Add(ipfsCard)
+	return content
+}
+
 func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 	var shop *Shop
 	if existingShop != nil {
@@ -390,7 +651,7 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 			authMutex.RLock()
 			userAddress := currentUser.Address
 			authMutex.RUnlock()
-			
+
 			shop = &Shop{
 				OwnerAddress: userAddress,
 				Items:        []Item{},
@@ -722,6 +983,78 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 		updateShopsList(window)
 	})
 
+	// Generate and Publish button
+	generateAndPublishBtn := widget.NewButton("Generate and Publish", func() {
+		// First check if IPFS daemon is running
+		if !ipfsManager.IsDaemonRunning() {
+			dialog.ShowError(errors.New("IPFS daemon is not running. Please start IPFS daemon in the Settings tab first"), window)
+			return
+		}
+
+		if shop.Name == "" {
+			dialog.ShowError(errors.New("shop name is required"), window)
+			return
+		}
+
+		// Create shop directory
+		shopDir := filepath.Join("shops", shop.Name)
+		if err := generateShop(shop, shopDir); err != nil {
+			dialog.ShowError(fmt.Errorf("failed to generate shop: %w", err), window)
+			return
+		}
+
+		// Show progress dialog
+		progress := dialog.NewProgress("Publishing to IPFS", "Publishing your shop...", window)
+		progress.Show()
+
+		// Start publishing process in a goroutine
+		go func() {
+			defer progress.Hide()
+
+			// Publish to IPFS
+			cid, err := ipfsManager.AddDirectory(shopDir)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to publish to IPFS: %w", err), window)
+				return
+			}
+
+			// Get gateway URL using the manager's method
+			gateway := ipfsManager.GetGatewayURL(cid)
+
+			// Save CID and gateway URL to a metadata file
+			metadata := struct {
+				CID     string `json:"cid"`
+				Gateway string `json:"gateway"`
+			}{
+				CID:     cid,
+				Gateway: gateway,
+			}
+
+			metadataBytes, err := json.MarshalIndent(metadata, "", "    ")
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to create metadata: %w", err), window)
+				return
+			}
+
+			if err := os.WriteFile(filepath.Join(shopDir, "ipfs_metadata.json"), metadataBytes, 0644); err != nil {
+				dialog.ShowError(fmt.Errorf("failed to save metadata: %w", err), window)
+				return
+			}
+
+			if err := clearCurrentShop(); err != nil {
+				log.Printf("Error clearing current shop: %v", err)
+				// Continue anyway as the shop was generated and published successfully
+			}
+
+			// Show success dialog with the gateway URL
+			dialog.ShowInformation("Success",
+				fmt.Sprintf("Shop published successfully!\nGateway URL: %s\nCID: %s", gateway, cid),
+				window)
+
+			updateShopsList(window)
+		}()
+	})
+
 	// Layout for item fields
 	itemFieldsBox := container.NewVBox(
 		itemName,
@@ -763,6 +1096,7 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 				widget.NewLabel("Items:"),
 				container.NewMax(itemsList),
 				generateBtn,
+				generateAndPublishBtn,
 			),
 		),
 	)
@@ -815,12 +1149,6 @@ func loadShop(shopName string) (*Shop, error) {
 
 	// No need to modify paths as they are already stored correctly
 	return &shop, nil
-}
-
-func hexToColor(hex string) color.RGBA {
-	var r, g, b uint8
-	fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b)
-	return color.RGBA{r, g, b, 255}
 }
 
 func generateShop(shop *Shop, outputDir string) error {
@@ -1271,12 +1599,7 @@ func (c *ColorButton) Tapped(_ *fyne.PointEvent) {
 		if apply && selectedColor != nil {
 			// Convert the selected color to RGBA
 			nrgba := selectedColor.(color.NRGBA)
-			c.currentColor = color.RGBA{
-				R: nrgba.R,
-				G: nrgba.G,
-				B: nrgba.B,
-				A: nrgba.A,
-			}
+			c.currentColor = color.RGBA(nrgba)
 			if c.onSelected != nil {
 				c.onSelected(c.currentColor)
 			}
@@ -1296,12 +1619,6 @@ func clamp(val, min, max int) int {
 }
 
 // Authentication related functions
-func isUserAuthenticated() bool {
-	authMutex.RLock()
-	defer authMutex.RUnlock()
-	return currentUser != nil
-}
-
 func authenticateWithEthereum(address, message, signature string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1361,7 +1678,7 @@ func clearCurrentShop() error {
 	authMutex.RLock()
 	userAddress := currentUser.Address
 	authMutex.RUnlock()
-	
+
 	newShop := &Shop{
 		OwnerAddress: userAddress,
 		Items:        []Item{},
@@ -1391,7 +1708,7 @@ func loadCurrentShop() (*Shop, error) {
 			authMutex.RLock()
 			userAddress := currentUser.Address
 			authMutex.RUnlock()
-			
+
 			return &Shop{
 				OwnerAddress: userAddress,
 				Items:        []Item{},
@@ -1406,4 +1723,38 @@ func loadCurrentShop() (*Shop, error) {
 	}
 
 	return &shop, nil
+}
+
+func updateIPFSStatus(ipfsStatusLabel *widget.Label, daemonButton *widget.Button) {
+	installed, version := ipfsManager.IsIPFSDownloaded()
+	if installed {
+		status := "Not Connected"
+		if ipfsManager.IsDaemonRunning() {
+			status = "Connected"
+			if daemonButton != nil {
+				daemonButton.SetText("Stop Daemon")
+				// Add additional info in settings tab
+				daemonType := "External (started from command line)"
+				if ipfsManager.Daemon != nil {
+					daemonType = "Internal (started by IndieNode)"
+				}
+				ipfsStatusLabel.SetText(fmt.Sprintf("IPFS %s | Daemon: %s\n%s",
+					strings.TrimSpace(version), status, daemonType))
+				return
+			}
+		} else {
+			if daemonButton != nil {
+				daemonButton.SetText("Start Daemon")
+			}
+		}
+
+		// For main status bar or other locations
+		ipfsStatusLabel.SetText(fmt.Sprintf("IPFS %s | Daemon: %s",
+			strings.TrimSpace(version), status))
+	} else {
+		ipfsStatusLabel.SetText("IPFS Status: Not Installed")
+		if daemonButton != nil {
+			daemonButton.Disable()
+		}
+	}
 }

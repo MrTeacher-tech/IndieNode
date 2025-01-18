@@ -1,6 +1,6 @@
 {
     "ID": "",
-    "OwnerAddress": "0xd21386B302d0e51044246B50e18A2F61673FceC9",
+    "OwnerAddress": "0x5e83C927c5CF0022ed11627615643F059B7fC71C",
     "Name": "Ben's Shoe Store",
     "Description": "",
     "Location": "",
@@ -28,8 +28,8 @@
     "LocalLogoPath": "/Users/andrewverrilli/Desktop/BensShoeStore/bens-shoe-store-logo.png",
     "Items": [
         {
-            "Name": "Nikes",
-            "Price": 50,
+            "Name": "Red Nikes",
+            "Price": 400,
             "Description": "",
             "PhotoPaths": [
                 "../assets/item_images/red-nike.jpg"

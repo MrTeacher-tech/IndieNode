@@ -1,12 +1,19 @@
+PURPOSE: This document serves as a critical reference for maintaining code consistency and following established patterns in the IndieNode project. It outlines key architectural decisions, important rules, and implementation guidelines that must be followed to ensure the application's stability and proper functionality.
+
+THINGS YOU SHOULD NEVER DO:
+- Never change how image files are handled in any way, if you feel like you are accidentally changing how image files or paths are handled, stop what you are doing and chat with me please
+- Never change how UI is handled in any way, if you feel like you are accidentally changing how UI is handled, stop what you are doing and chat with me please
+- Never replace actually code in the codebase with placeholder text like [...rest of the file remains the same...]
+
 IMPORTANT PROJECT NOTES:
 
-IndieNode is a dapp that for decentralized ecommerce, giving full ownership of shops to buisness ownership
+IndieNode is a dapp for decentralized ecommerce, giving full ownership of shops to business owners.
 
 
 1. Shop Data Management:
    - Current shop being worked on is stored in both memory (Shop struct) and on disk (current_shop.json)
    - current_shop.json serves as the source of truth for the shop being edited
-   -current_shop.json is cleared when generate shop button is clicked
+   - current_shop.json is cleared when generate shop button is clicked
 
 2. File Structure:
    shops/
@@ -19,7 +26,7 @@ IndieNode is a dapp that for decentralized ecommerce, giving full ownership of s
    │       └── style.css
 
 3. Critical File Handling Rules:
-***Do not change how image files are handled in any way, if you feel like you are accidently changing how image files or paths are handled, stop what you are doing and chat with me please***
+***Do not change how image files are handled in any way, if you feel like you are accidentally changing how image files or paths are handled, stop what you are doing and chat with me please***
    - NEVER create a global 'assets' directory in the main 'shops' directory
    - When copying files (logos, images), ALWAYS:
      * Copy FROM: The local source path stored in Shop struct and current_shop.json
@@ -29,6 +36,8 @@ IndieNode is a dapp that for decentralized ecommerce, giving full ownership of s
 4. Authentication:
    - Uses Ethereum wallet authentication via SIWE (Sign-In with Ethereum)
    - Shop ownership is tied to Ethereum addresses
+   - Thread-safe user state management using mutex
+   - Streamlined authentication flow without redundant windows
 
 5. Generated HTML:
     - Responsive grid layout for items
@@ -37,7 +46,7 @@ IndieNode is a dapp that for decentralized ecommerce, giving full ownership of s
     - Proper image paths relative to HTML location
 
 6. Main Window UI Organization:
-***Do not change how UI is handled in any way, if you feel like you are accidently changing how UI is handled, stop what you are doing and chat with me please***
+***Do not change how UI is handled in any way, if you feel like you are accidentally changing how UI is handled, stop what you are doing and chat with me please***
     - Use tabs for clear separation of functionality:
       * Shop List Tab: View and manage all created shops
       * Shop Creator Tab: Full-width interface for creating/editing shops
@@ -50,8 +59,21 @@ IndieNode is a dapp that for decentralized ecommerce, giving full ownership of s
     - Avoid nested containers that make the interface feel cluttered
     - Use scrolling containers for lists rather than compressing content
 
-## Next Steps
-1. IPFS Integration
-   - Complete daemon management
-   - Implement file pinning
-   - Add CID management
+7. IPFS Integration:
+   - Proper version detection and display in UI
+   - Supports both system-wide and custom IPFS installations
+   - Version information shown in status label
+   - All IPFS-related type definitions MUST be in ipfs/types.go:
+     * IPFSManager struct
+     * DaemonStatus and other IPFS-specific types
+     * IPFS-related constants
+   - Other ipfs/*.go files should only contain method implementations
+
+Things to remember:
+- When you're ready to build for production, set DEV_MODE = false
+
+
+
+
+## Ethereum Wallet Adress for testing:
+0x37eA7944328DF1A4D7ffA6658A002d5C332c8113
