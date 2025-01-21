@@ -35,6 +35,8 @@ Treat logs as event streams
 XII. Admin processes
 Run admin/management tasks as one-off processes
 
+
+
 1. Shop Data Management:
    - Current shop being worked on is stored in both memory (Shop struct) and on disk (current_shop.json)
    - current_shop.json serves as the source of truth for the shop being edited

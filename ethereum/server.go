@@ -1,6 +1,7 @@
 package ethereum
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -52,6 +53,36 @@ func ServeHTML(w http.ResponseWriter, r *http.Request) {
                     const account = accounts[0];
                     statusText.textContent = 'Connected: ' + account;
                     console.log('Connected to MetaMask account: ' + account);
+                    
+                    // Create a message to sign
+                    const message = "Sign this message to authenticate with IndieNode";
+                    
+                    // Request signature
+                    const signature = await window.ethereum.request({
+                        method: 'personal_sign',
+                        params: [message, account]
+                    });
+                    
+                    // Send the address and signature to our backend
+                    const response = await fetch('/authenticate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            address: account,
+                            message: message,
+                            signature: signature
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        statusText.textContent = 'Authentication successful! You can close this window.';
+                        // Close the window after a brief delay
+                        setTimeout(() => window.close(), 2000);
+                    } else {
+                        throw new Error('Authentication failed');
+                    }
                 } catch (error) {
                     console.error('Error connecting to MetaMask:', error);
                     statusText.textContent = 'Error connecting to MetaMask. Check the console for details.';
@@ -70,30 +101,52 @@ func ServeHTML(w http.ResponseWriter, r *http.Request) {
 }
 
 // ConnectToMetaMask starts the server and opens the browser for MetaMask connection
-func ConnectToMetaMask() {
-	fmt.Println("Starting MetaMask connection server at http://localhost:8080")
+func ConnectToMetaMask(authCallback func(address, message, signature string)) {
+    fmt.Println("Starting MetaMask connection server at http://localhost:8080")
+    
+    // Initialize server if not already running
+    if server == nil {
+        mux := http.NewServeMux()
+        mux.HandleFunc("/", ServeHTML)
+        mux.HandleFunc("/authenticate", func(w http.ResponseWriter, r *http.Request) {
+            if r.Method != http.MethodPost {
+                http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                return
+            }
 
-	// Initialize server if not already running
-	if server == nil {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/", ServeHTML)
+            var auth struct {
+                Address   string `json:"address"`
+                Message   string `json:"message"`
+                Signature string `json:"signature"`
+            }
 
-		server = &http.Server{
-			Addr:    ":8080",
-			Handler: mux,
-		}
+            if err := json.NewDecoder(r.Body).Decode(&auth); err != nil {
+                http.Error(w, "Invalid request body", http.StatusBadRequest)
+                return
+            }
 
-		// Start server in a goroutine
-		go func() {
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				fmt.Printf("Error starting server: %v\n", err)
-			}
-		}()
+            // Call the provided authentication callback
+            authCallback(auth.Address, auth.Message, auth.Signature)
 
-		// Open browser
-		time.Sleep(100 * time.Millisecond) // Give server time to start
-		if err := OpenBrowser("http://localhost:8080"); err != nil {
-			fmt.Printf("Error opening browser: %v\n", err)
-		}
-	}
+            w.WriteHeader(http.StatusOK)
+        })
+        
+        server = &http.Server{
+            Addr:    ":8080",
+            Handler: mux,
+        }
+        
+        // Start server in a goroutine
+        go func() {
+            if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+                fmt.Printf("Error starting server: %v\n", err)
+            }
+        }()
+        
+        // Open browser
+        time.Sleep(100 * time.Millisecond) // Give server time to start
+        if err := OpenBrowser("http://localhost:8080"); err != nil {
+            fmt.Printf("Error opening browser: %v\n", err)
+        }
+    }
 }

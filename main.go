@@ -35,8 +35,8 @@ import (
 
 	"shopCreator/auth"
 	"shopCreator/db"
-	"shopCreator/ipfs"
 	"shopCreator/ethereum" // Update the ethereum package import to use the correct module path
+	"shopCreator/ipfs"
 )
 
 // App configuration
@@ -397,7 +397,9 @@ func main() {
 		})
 
 		metaMaskButton := widget.NewButton("Sign in with MetaMask", func() {
-			ethereum.ConnectToMetaMask()
+			ethereum.ConnectToMetaMask(func(address, message, signature string) {
+				authenticateWithEthereum(address, message, signature)
+			})
 		})
 
 		content := container.NewVBox(
@@ -1609,12 +1611,15 @@ func authenticateWithEthereum(address, message, signature string) {
 		return
 	}
 
+	// Convert to checksum address
+	checksumAddress := common.HexToAddress(address).Hex()
+
 	// Create SIWE message
-	siweMsg := auth.CreateSIWEMessage(address)
+	siweMsg := auth.CreateSIWEMessage(checksumAddress)
 
 	// Verify the signature
-	if !auth.VerifySignature(siweMsg, signature, address) {
-		log.Printf("Signature verification failed for address: %s", address)
+	if !auth.VerifySignature(siweMsg, signature, checksumAddress) {
+		log.Printf("Signature verification failed for address: %s", checksumAddress)
 		dialog.ShowError(fmt.Errorf("invalid signature"), mainWindow)
 		return
 	}
@@ -1624,7 +1629,7 @@ func authenticateWithEthereum(address, message, signature string) {
 	// Set authenticated user
 	authMutex.Lock()
 	currentUser = &auth.AuthenticatedUser{
-		Address:         address,
+		Address:         checksumAddress,
 		SignedMessage:   message,
 		Signature:       signature,
 		AuthenticatedAt: time.Now(),
