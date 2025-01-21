@@ -9,6 +9,31 @@ IMPORTANT PROJECT NOTES:
 
 IndieNode is a dapp for decentralized ecommerce, giving full ownership of shops to business owners.
 
+Ensure app alligns with Twelve-Factor App methodologys:
+I. Codebase
+One codebase tracked in revision control, many deploys
+II. Dependencies
+Explicitly declare and isolate dependencies
+III. Config
+Store config in the environment
+IV. Backing services
+Treat backing services as attached resources
+V. Build, release, run
+Strictly separate build and run stages
+VI. Processes
+Execute the app as one or more stateless processes
+VII. Port binding
+Export services via port binding
+VIII. Concurrency
+Scale out via the process model
+IX. Disposability
+Maximize robustness with fast startup and graceful shutdown
+X. Dev/prod parity
+Keep development, staging, and production as similar as possible
+XI. Logs
+Treat logs as event streams
+XII. Admin processes
+Run admin/management tasks as one-off processes
 
 1. Shop Data Management:
    - Current shop being worked on is stored in both memory (Shop struct) and on disk (current_shop.json)
@@ -72,6 +97,27 @@ IndieNode is a dapp for decentralized ecommerce, giving full ownership of shops 
 Things to remember:
 - When you're ready to build for production, set DEV_MODE = false
 
+
+- Next steps:
+- QR code
+- change colors of fyne app windows
+- change background color of main window to #fffce9
+- change text to #1d1d1d
+- change lines of boxes to #5ad9d5
+
+
+Further Development Steps:
+
+- Create a new "OrbitDB Settings" card below the IPFS settings
+Show key information about the OrbitDB instance:
+Connection status (Connected/Disconnected)
+Database directory path
+Network mode (public/private)
+Number of shops currently in the database
+The status would update whenever the settings tab is opened, showing you the real-time state of your OrbitDB instance.
+
+- Change shop template to use OrbitDB to load shop data
+- When editing a shop, save the changes to OrbitDB and add new images to IPFS directory
 
 
 

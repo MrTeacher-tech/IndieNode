@@ -27,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/lusingander/colorpicker"
 
@@ -35,6 +36,7 @@ import (
 	"shopCreator/auth"
 	"shopCreator/db"
 	"shopCreator/ipfs"
+	"shopCreator/ethereum" // Update the ethereum package import to use the correct module path
 )
 
 // App configuration
@@ -81,6 +83,11 @@ var (
 	authMutex   sync.RWMutex
 	ipfsManager *ipfs.IPFSManager
 )
+
+// isDevMode returns whether the application is running in development mode
+func isDevMode() bool {
+	return os.Getenv("DEV_MODE") == "true"
+}
 
 func updateShopsList(window fyne.Window) {
 	if shopsContainer == nil {
@@ -177,7 +184,6 @@ func updateShopsList(window fyne.Window) {
 
 									dialog.ShowInformation("Success", "Shop unpublished successfully", infoWindow)
 									infoWindow.Close()
-									// Refresh the shops list to update the button
 									updateShopsList(window)
 								}, infoWindow)
 						}),
@@ -246,7 +252,6 @@ func updateShopsList(window fyne.Window) {
 						fmt.Sprintf("Shop published successfully!\nGateway URL: %s\nCID: %s", gateway, cid),
 						window)
 
-					// Refresh the shops list to update the button
 					updateShopsList(window)
 				}()
 			})
@@ -326,6 +331,7 @@ func main() {
 	defer db.DB.Close()
 
 	mainApp = app.New()
+	mainApp.Settings().SetTheme(newCustomTheme())
 
 	// Set application icon
 	icon, err := fyne.LoadResourceFromPath("IndieNode_assets/indieNode_logo.png")
@@ -337,9 +343,7 @@ func main() {
 	signInWindow := mainApp.NewWindow("IndieNode - Sign In")
 	signInWindow.Resize(fyne.NewSize(400, 500))
 
-	// Development mode: Auto-sign in
-	const DEV_MODE = true // Toggle this for production
-	if DEV_MODE {
+	if isDevMode() {
 		testAddress := "0x37eA7944328DF1A4D7ffA6658A002d5C332c8113"
 		// Simulate authentication
 		authenticateWithEthereum(testAddress, "dev_message", "dev_signature")
@@ -392,12 +396,17 @@ func main() {
 			)
 		})
 
+		metaMaskButton := widget.NewButton("Sign in with MetaMask", func() {
+			ethereum.ConnectToMetaMask()
+		})
+
 		content := container.NewVBox(
 			container.NewHBox(layout.NewSpacer(), logo, layout.NewSpacer()),
 			welcomeText,
 			widget.NewLabel("Enter your Ethereum address:"),
 			address,
 			signInBtn,
+			metaMaskButton,
 		)
 
 		signInWindow.SetContent(content)
@@ -555,6 +564,38 @@ func createShopsTab() fyne.CanvasObject {
 func createSettingsTab() fyne.CanvasObject {
 	content := container.NewVBox()
 
+	// Create IndieNode Settings section
+	indieNodeCard := widget.NewCard("IndieNode Settings", "", nil)
+
+	// Create version label
+	versionLabel := widget.NewLabelWithStyle(
+		"Version: pre-alpha",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	// Create Go version label
+	goVersionLabel := widget.NewLabelWithStyle(
+		fmt.Sprintf("Go Version: %s", runtime.Version()),
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	// Create DEV_MODE label
+	devModeLabel := widget.NewLabelWithStyle(
+		fmt.Sprintf("DEV_MODE: %v", isDevMode()),
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	indieNodeCard.SetContent(container.NewVBox(
+		versionLabel,
+		goVersionLabel,
+		devModeLabel,
+	))
+
+	content.Add(indieNodeCard)
+
 	// Create IPFS Settings section
 	ipfsCard := widget.NewCard("IPFS Settings", "", nil)
 
@@ -635,6 +676,32 @@ func createSettingsTab() fyne.CanvasObject {
 	))
 
 	content.Add(ipfsCard)
+
+	// Create OrbitDB Settings section
+	orbitDBCard := widget.NewCard("OrbitDB Settings", "", nil)
+
+	// Create status label for OrbitDB
+	orbitDBStatusLabel := widget.NewLabelWithStyle(
+		"Status: Not Connected",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{},
+	)
+
+	// Add database path label
+	dbPathLabel := widget.NewLabelWithStyle(
+		"Database Path: Not Connected",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{},
+	)
+
+	// Initial layout with just status labels
+	orbitDBCard.SetContent(container.NewVBox(
+		orbitDBStatusLabel,
+		widget.NewSeparator(),
+		dbPathLabel,
+	))
+
+	content.Add(orbitDBCard)
 	return content
 }
 
@@ -960,101 +1027,6 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 		},
 	)
 
-	// Generate button
-	generateBtn := widget.NewButton("Generate Shop", func() {
-		if shop.Name == "" {
-			dialog.ShowError(errors.New("shop name is required"), window)
-			return
-		}
-
-		// Create shop directory
-		shopDir := filepath.Join("shops", shop.Name)
-		if err := generateShop(shop, shopDir); err != nil {
-			dialog.ShowError(fmt.Errorf("failed to generate shop: %w", err), window)
-			return
-		}
-
-		if err := clearCurrentShop(); err != nil {
-			log.Printf("Error clearing current shop: %v", err)
-			// Continue anyway as the shop was generated successfully
-		}
-
-		dialog.ShowInformation("Success", "Shop generated successfully!", window)
-		updateShopsList(window)
-	})
-
-	// Generate and Publish button
-	generateAndPublishBtn := widget.NewButton("Generate and Publish", func() {
-		// First check if IPFS daemon is running
-		if !ipfsManager.IsDaemonRunning() {
-			dialog.ShowError(errors.New("IPFS daemon is not running. Please start IPFS daemon in the Settings tab first"), window)
-			return
-		}
-
-		if shop.Name == "" {
-			dialog.ShowError(errors.New("shop name is required"), window)
-			return
-		}
-
-		// Create shop directory
-		shopDir := filepath.Join("shops", shop.Name)
-		if err := generateShop(shop, shopDir); err != nil {
-			dialog.ShowError(fmt.Errorf("failed to generate shop: %w", err), window)
-			return
-		}
-
-		// Show progress dialog
-		progress := dialog.NewProgress("Publishing to IPFS", "Publishing your shop...", window)
-		progress.Show()
-
-		// Start publishing process in a goroutine
-		go func() {
-			defer progress.Hide()
-
-			// Publish to IPFS
-			cid, err := ipfsManager.AddDirectory(shopDir)
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to publish to IPFS: %w", err), window)
-				return
-			}
-
-			// Get gateway URL using the manager's method
-			gateway := ipfsManager.GetGatewayURL(cid)
-
-			// Save CID and gateway URL to a metadata file
-			metadata := struct {
-				CID     string `json:"cid"`
-				Gateway string `json:"gateway"`
-			}{
-				CID:     cid,
-				Gateway: gateway,
-			}
-
-			metadataBytes, err := json.MarshalIndent(metadata, "", "    ")
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to create metadata: %w", err), window)
-				return
-			}
-
-			if err := os.WriteFile(filepath.Join(shopDir, "ipfs_metadata.json"), metadataBytes, 0644); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to save metadata: %w", err), window)
-				return
-			}
-
-			if err := clearCurrentShop(); err != nil {
-				log.Printf("Error clearing current shop: %v", err)
-				// Continue anyway as the shop was generated and published successfully
-			}
-
-			// Show success dialog with the gateway URL
-			dialog.ShowInformation("Success",
-				fmt.Sprintf("Shop published successfully!\nGateway URL: %s\nCID: %s", gateway, cid),
-				window)
-
-			updateShopsList(window)
-		}()
-	})
-
 	// Layout for item fields
 	itemFieldsBox := container.NewVBox(
 		itemName,
@@ -1095,8 +1067,6 @@ func showShopCreator(window fyne.Window, existingShop *Shop) fyne.CanvasObject {
 				widget.NewSeparator(),
 				widget.NewLabel("Items:"),
 				container.NewMax(itemsList),
-				generateBtn,
-				generateAndPublishBtn,
 			),
 		),
 	)
@@ -1756,5 +1726,26 @@ func updateIPFSStatus(ipfsStatusLabel *widget.Label, daemonButton *widget.Button
 		if daemonButton != nil {
 			daemonButton.Disable()
 		}
+	}
+}
+
+type CustomTheme struct {
+	fyne.Theme
+}
+
+func newCustomTheme() *CustomTheme {
+	return &CustomTheme{Theme: theme.DefaultTheme()}
+}
+
+func (t *CustomTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	switch name {
+	case theme.ColorNameBackground:
+		return color.NRGBA{R: 0xff, G: 0xfc, B: 0xe9, A: 0xff} // #fffce9
+	case theme.ColorNameForeground:
+		return color.NRGBA{R: 0x1d, G: 0x1d, B: 0x1d, A: 0xff} // #1d1d1d
+	case theme.ColorNamePrimary:
+		return color.NRGBA{R: 0x5a, G: 0xd9, B: 0xd5, A: 0xff} // #5ad9d5
+	default:
+		return t.Theme.Color(name, variant)
 	}
 }

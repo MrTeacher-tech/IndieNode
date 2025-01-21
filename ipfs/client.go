@@ -213,3 +213,11 @@ func (m *IPFSManager) UnpublishContent(cid string) error {
 
 	return nil
 }
+
+func (m *IPFSManager) GetIPFSNode() (interface{}, error) {
+	if !m.IsDaemonRunning() {
+		return nil, fmt.Errorf("IPFS daemon is not running")
+	}
+
+	return m.Shell, nil
+}
