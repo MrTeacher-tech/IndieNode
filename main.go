@@ -282,8 +282,37 @@ func updateShopsList(window fyne.Window) {
 						fmt.Sprintf("Are you sure you want to delete %s?", name),
 						func(delete bool) {
 							if delete {
-								if err := os.RemoveAll(filepath.Join("shops", name)); err != nil {
-									dialog.ShowError(err, window)
+								shopPath := filepath.Join("shops", name)
+								
+								// Check if shop was published to IPFS
+								metadataPath := filepath.Join(shopPath, "ipfs_metadata.json")
+								if _, err := os.Stat(metadataPath); err == nil {
+									// Read metadata to get CID
+									data, err := os.ReadFile(metadataPath)
+									if err != nil {
+										dialog.ShowError(fmt.Errorf("failed to read IPFS metadata: %w", err), window)
+										return
+									}
+
+									var metadata struct {
+										CID     string `json:"cid"`
+										Gateway string `json:"gateway"`
+									}
+									if err := json.Unmarshal(data, &metadata); err != nil {
+										dialog.ShowError(fmt.Errorf("failed to parse IPFS metadata: %w", err), window)
+										return
+									}
+
+									// Unpin content from IPFS
+									if err := ipfsManager.UnpublishContent(metadata.CID); err != nil {
+										dialog.ShowError(fmt.Errorf("failed to unpin content from IPFS: %w", err), window)
+										return
+									}
+								}
+
+								// Remove the shop directory
+								if err := os.RemoveAll(shopPath); err != nil {
+									dialog.ShowError(fmt.Errorf("failed to delete shop directory: %w", err), window)
 									return
 								}
 								updateShopsList(window)
@@ -353,6 +382,7 @@ func main() {
 		// Load and create logo image
 		logo := canvas.NewImageFromFile("IndieNode_assets/indieNode_logo.png")
 		logo.SetMinSize(fyne.NewSize(200, 200))
+		logo.Resize(fyne.NewSize(200, 200))
 
 		// Create centered welcome text
 		welcomeText := widget.NewLabelWithStyle(
@@ -361,54 +391,20 @@ func main() {
 			fyne.TextStyle{Bold: true},
 		)
 
-		address := widget.NewEntry()
-		address.SetPlaceHolder("Enter Ethereum Address")
-
-		signInBtn := widget.NewButton("Sign In with Ethereum", func() {
-			if address.Text == "" {
-				dialog.ShowError(fmt.Errorf("please enter an Ethereum address"), signInWindow)
-				return
-			}
-
-			// Create SIWE message
-			siweMsg := auth.CreateSIWEMessage(address.Text)
-			formattedMsg := siweMsg.FormatMessage()
-
-			// Show message for signing
-			dialog.ShowCustomConfirm("Sign Message", "Sign", "Cancel",
-				widget.NewTextGridFromString(formattedMsg),
-				func(sign bool) {
-					if !sign {
-						return
-					}
-
-					// For development, we'll simulate a successful signature
-					// In production, this would interact with a wallet
-					simulatedSignature := "0x123..." // Placeholder signature
-
-					// Authenticate using the dedicated function
-					authenticateWithEthereum(address.Text, formattedMsg, simulatedSignature)
-
-					// Close the sign-in window
-					signInWindow.Close()
-				},
-				signInWindow,
-			)
-		})
-
-		metaMaskButton := widget.NewButton("Sign in with MetaMask", func() {
+		metaMaskButton := widget.NewButton("Login with MetaMask", func() {
 			ethereum.ConnectToMetaMask(func(address, message, signature string) {
 				authenticateWithEthereum(address, message, signature)
+				signInWindow.Close()
 			})
 		})
 
+		// Create a vertical container with centered content
 		content := container.NewVBox(
+			layout.NewSpacer(),
 			container.NewHBox(layout.NewSpacer(), logo, layout.NewSpacer()),
 			welcomeText,
-			widget.NewLabel("Enter your Ethereum address:"),
-			address,
-			signInBtn,
-			metaMaskButton,
+			container.NewHBox(layout.NewSpacer(), metaMaskButton, layout.NewSpacer()),
+			layout.NewSpacer(),
 		)
 
 		signInWindow.SetContent(content)

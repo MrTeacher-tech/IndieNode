@@ -36,13 +36,67 @@ func ServeHTML(w http.ResponseWriter, r *http.Request) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MetaMask Login</title>
+    <style>
+        body {
+            background-color: #fffce9;
+            color: #1d1d1d;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+        .logo {
+            width: 200px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            margin: 20px 0;
+        }
+        #connectButton {
+            background-color: #5ad9d5;
+            color: #1d1d1d;
+            border: 2px solid #5ad9d5;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        #connectButton:hover {
+            background-color: transparent;
+            color: #1d1d1d;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border: 2px solid #5ad9d5;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
 </head>
 <body>
+    <img src="/assets/logo.png" alt="IndieNode Logo" class="logo">
     <h1>Login with MetaMask</h1>
     <button id="connectButton">Connect Wallet</button>
     <p id="status"></p>
 
     <script>
+        // Show status element when it has content
+        const statusElement = document.getElementById('status');
+        const originalSetText = statusElement.textContent;
+        Object.defineProperty(statusElement, 'textContent', {
+            set: function(value) {
+                originalSetText.call(this, value);
+                this.style.display = value ? 'block' : 'none';
+            }
+        });
+
         const connectButton = document.getElementById('connectButton');
         const statusText = document.getElementById('status');
 
@@ -108,6 +162,16 @@ func ConnectToMetaMask(authCallback func(address, message, signature string)) {
     if server == nil {
         mux := http.NewServeMux()
         mux.HandleFunc("/", ServeHTML)
+        
+        // Serve logo file from IndieNode_assets directory
+        mux.HandleFunc("/assets/", func(w http.ResponseWriter, r *http.Request) {
+            if r.URL.Path == "/assets/logo.png" {
+                http.ServeFile(w, r, "IndieNode_assets/indieNode_logo.png")
+                return
+            }
+            http.NotFound(w, r)
+        })
+        
         mux.HandleFunc("/authenticate", func(w http.ResponseWriter, r *http.Request) {
             if r.Method != http.MethodPost {
                 http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
