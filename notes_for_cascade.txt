@@ -1,9 +1,16 @@
 PURPOSE: This document serves as a critical reference for maintaining code consistency and following established patterns in the IndieNode project. It outlines key architectural decisions, important rules, and implementation guidelines that must be followed to ensure the application's stability and proper functionality.
 
+Always make sure your paranetheses are balanced. Don't forget the closing ones!
+
+Don't run the go code in a dedicated terminal, I will run the code myself when I am ready.
+
+local imports do not start with Github.com/ be precise with local imports
+
 THINGS YOU SHOULD NEVER DO:
+- Never remove buttons from UI with confirming with me! Do not remove the Generate Shop button, it is crucial for the shop creation process!
 - Never change how image files are handled in any way, if you feel like you are accidentally changing how image files or paths are handled, stop what you are doing and chat with me please
 - Never change how UI is handled in any way, if you feel like you are accidentally changing how UI is handled, stop what you are doing and chat with me please
-- Never replace actually code in the codebase with placeholder text like [...rest of the file remains the same...]
+- Never replace actually code in the codebase with placeholder text like [...rest of the file remains the same...] or //code remains the same
 
 IMPORTANT PROJECT NOTES:
 
@@ -101,30 +108,10 @@ Things to remember:
 - When you're ready to build for production, set DEV_MODE = false
 
 
-After implementing the orbitDB:
-Change the site template so that the following features are implemented:
-   - Add a buy button to each item, the buy button should show the price of each item in USD (which it gets from the orbitDB) and it should have the price in ethereum that it gets using a free of chain read only call
-   - When the buyer clicks the buy button, connect to the buyer's MetaMask wallet (if not already connected).
-   - Initiate a payment transaction to the seller's wallet for the specified price.
-   - Prompt the buyer to confirm the transaction via MetaMask.
-   - After transaction, prompt the buyer for an email adress that they can recieve payment updates from
-   - Send email to the seller notifying them of the transaction (it should say which item and for how much).
-   - Notify the buyer of the transaction status (e.g., success or failure).
-
 
 Next Steps:
-
-- check db/orbitdb for code related to orbitDB set up
-- Show key information about the OrbitDB instance:
-   Connection status (Connected/Disconnected)
-   Database directory path
-   Network mode (public/private)
-   Number of shops currently in the database
-   The status would update whenever the settings tab is opened, showing you the real-time state of your OrbitDB instance.
-
-- Change shop template to use OrbitDB to load shop data (price and name of each item)
-- When editing a shop, save the changes to OrbitDB and add new images to IPFS directory (Do this seperatley after previous steps)
-
+- Add sign in with ethereum feature (like we used to have)
+- Add buttons to shop to buy items, using ethereum
 
 
 ## Ethereum Wallet Adress for testing:

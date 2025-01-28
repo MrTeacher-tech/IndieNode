@@ -131,13 +131,16 @@ func (m *IPFSManager) AddCustomGateway(url string) {
 }
 
 func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) {
-	// Use IPFS to add the existing HTML file
-	hash, err := m.AddFile(htmlPath)
+	// Get the shop directory path (parent of src)
+	shopDir := filepath.Dir(filepath.Dir(htmlPath))
+
+	// Use IPFS to add the entire shop directory
+	hash, err := m.AddDirectory(shopDir)
 	if err != nil {
-		return "", fmt.Errorf("error adding file to IPFS: %v", err)
+		return "", fmt.Errorf("error adding directory to IPFS: %v", err)
 	}
 
-	// Get the gateway URL using the hash returned from AddFile
+	// Get the gateway URL using the hash returned from AddDirectory
 	url := m.GetGatewayURL(hash)
 
 	// Update the shop.json with the new CID

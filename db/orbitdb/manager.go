@@ -2,11 +2,13 @@ package orbitdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
-	"shopCreator/ipfs"
+	"IndieNode/internal/models"
+	"IndieNode/ipfs"
 
 	orbitdb "berty.tech/go-orbit-db"
 	"berty.tech/go-orbit-db/iface"
@@ -97,7 +99,7 @@ func (m *Manager) IsConnected() bool {
 }
 
 // GetShopStore returns the shop store instance
-func (m *Manager) GetShopStore() interface{} {
+func (m *Manager) GetShopStore() orbitdb.Store {
 	return m.shopStore
 }
 
@@ -106,11 +108,11 @@ func (m *Manager) VerifyOwnership(ownerAddress string) bool {
 	// For now, we'll implement a basic ownership check
 	// In a production environment, you might want to add more sophisticated checks
 	// such as verifying signatures or checking against a smart contract
-	
+
 	if ownerAddress == "" {
 		return false
 	}
-	
+
 	// Add your additional ownership verification logic here if needed
 	return true
 }
@@ -125,10 +127,44 @@ func (m *Manager) GetDatabasePath() string {
 
 // GetNetworkMode returns the current OrbitDB network mode
 func (m *Manager) GetNetworkMode() string {
-	if !m.isConnected {
-		return "Not Connected"
-	}
 	return m.config.NetworkMode
+}
+
+// StoreShop stores a shop in OrbitDB
+func (m *Manager) StoreShop(shop *models.Shop) error {
+	if !m.IsConnected() {
+		return fmt.Errorf("not connected to OrbitDB")
+	}
+
+	// Use shop's Ethereum address as the key
+	key := shop.OwnerAddress
+	// Convert shop to JSON for storage
+	shopData, err := json.Marshal(shop)
+	if err != nil {
+		return fmt.Errorf("failed to marshal shop data: %w", err)
+	}
+
+	// Store in OrbitDB using Put since it's a KeyValue store
+	kvStore := m.shopStore.(iface.KeyValueStore)
+	_, err = kvStore.Put(context.Background(), key, shopData)
+	if err != nil {
+		return fmt.Errorf("failed to store shop in OrbitDB: %w", err)
+	}
+
+	log.Printf("Successfully stored shop for owner %s in OrbitDB", key)
+	return nil
+}
+
+// GetShopCount returns the total number of shops in the database
+func (m *Manager) GetShopCount() (int, error) {
+	if !m.IsConnected() {
+		return 0, fmt.Errorf("not connected to OrbitDB")
+	}
+
+	// Get all entries using KeyValueStore interface
+	kvStore := m.shopStore.(iface.KeyValueStore)
+	entries := kvStore.All()
+	return len(entries), nil
 }
 
 // Additional methods will be added here...
