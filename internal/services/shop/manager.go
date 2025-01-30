@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"text/template"
 
 	"IndieNode/internal/models"
 	"IndieNode/internal/services/auth"
@@ -32,10 +33,58 @@ func NewManager(baseDir string, ipfsMgr *ipfs.IPFSManager) (*Manager, error) {
 
 // LoadCurrentShop loads the current shop from storage
 func (m *Manager) LoadCurrentShop() (*models.Shop, error) {
-	currentShopPath := filepath.Join(m.baseDir, "current_shop.json")
+	var shopPath string
+	if auth.IsDevMode() {
+		// In dev mode, load from the dev template in internal/dev
+		// Get the project root directory (parent of shops directory)
+		projectRoot := filepath.Dir(m.baseDir)
+		shopPath = filepath.Join(projectRoot, "internal", "dev", "dev_shop.json")
+	} else {
+		shopPath = filepath.Join(m.baseDir, "current_shop.json")
+		
+		// When not in dev mode, check if current shop matches dev shop
+		if _, err := os.Stat(shopPath); err == nil {
+			// Current shop exists, check if it matches dev shop
+			projectRoot := filepath.Dir(m.baseDir)
+			devShopPath := filepath.Join(projectRoot, "internal", "dev", "dev_shop.json")
+			
+			// Load both shops
+			currentData, err := os.ReadFile(shopPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read current shop: %w", err)
+			}
+			
+			devData, err := os.ReadFile(devShopPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read dev shop: %w", err)
+			}
+			
+			// Unmarshal both shops
+			var currentShop, devShop models.Shop
+			if err := json.Unmarshal(currentData, &currentShop); err != nil {
+				return nil, fmt.Errorf("failed to parse current shop: %w", err)
+			}
+			if err := json.Unmarshal(devData, &devShop); err != nil {
+				return nil, fmt.Errorf("failed to parse dev shop: %w", err)
+			}
+			
+			// Compare shops (ignoring owner address)
+			currentShop.OwnerAddress = ""
+			devShop.OwnerAddress = ""
+			currentJSON, _ := json.Marshal(currentShop)
+			devJSON, _ := json.Marshal(devShop)
+			
+			if string(currentJSON) == string(devJSON) {
+				// Current shop matches dev shop, clear it
+				if err := m.ClearCurrentShop(); err != nil {
+					return nil, fmt.Errorf("failed to clear dev shop data: %w", err)
+				}
+			}
+		}
+	}
 
 	// Try to load shop from file
-	data, err := os.ReadFile(currentShopPath)
+	data, err := os.ReadFile(shopPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If file doesn't exist, return a new shop
@@ -44,12 +93,17 @@ func (m *Manager) LoadCurrentShop() (*models.Shop, error) {
 				Items:        []models.Item{},
 			}, nil
 		}
-		return nil, fmt.Errorf("failed to read current shop: %w", err)
+		return nil, fmt.Errorf("failed to read shop file: %w", err)
 	}
 
 	var shop models.Shop
 	if err := json.Unmarshal(data, &shop); err != nil {
-		return nil, fmt.Errorf("failed to parse current shop: %w", err)
+		return nil, fmt.Errorf("failed to parse shop data: %w", err)
+	}
+
+	// In dev mode, always set the owner address to the current user
+	if auth.IsDevMode() {
+		shop.OwnerAddress = auth.GetCurrentUser().Address
 	}
 
 	return &shop, nil
@@ -180,6 +234,18 @@ func (m *Manager) GenerateShop(shop *models.Shop) error {
 		}
 	}
 
+	// Copy web3.js file
+	web3JsPath := filepath.Join(filepath.Dir(m.baseDir), "templates", "basic", "web3.js")
+	if err := m.copyFile(web3JsPath, filepath.Join(srcDir, "web3.js")); err != nil {
+		return fmt.Errorf("failed to copy web3.js: %w", err)
+	}
+
+	// Generate CSS
+	cssPath := filepath.Join(srcDir, "styles.css")
+	if err := m.generateCSS(shop, cssPath); err != nil {
+		return fmt.Errorf("failed to generate CSS: %w", err)
+	}
+
 	// Generate index.html
 	indexPath := filepath.Join(srcDir, "index.html")
 	if err := m.generateHTML(shop, indexPath); err != nil {
@@ -235,6 +301,46 @@ func (m *Manager) DeleteShop(name string) error {
 	return nil
 }
 
+// generateCSS generates the CSS file from the template
+func (m *Manager) generateCSS(shop *models.Shop, targetPath string) error {
+	// Read the CSS template
+	cssTemplate, err := os.ReadFile(filepath.Join("templates", "basic", "basic.css"))
+	if err != nil {
+		return fmt.Errorf("failed to read CSS template: %w", err)
+	}
+
+	// Create a template with the CSS content
+	tmpl, err := template.New("css").Parse(string(cssTemplate))
+	if err != nil {
+		return fmt.Errorf("failed to parse CSS template: %w", err)
+	}
+
+	// Create the target CSS file
+	cssFile, err := os.Create(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to create CSS file: %w", err)
+	}
+	defer cssFile.Close()
+
+	// Prepare template data with RGB colors
+	data := struct {
+		PrimaryColor   string
+		SecondaryColor string
+		TertiaryColor  string
+	}{
+		PrimaryColor:   fmt.Sprintf("rgb(%d, %d, %d)", shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B),
+		SecondaryColor: fmt.Sprintf("rgb(%d, %d, %d)", shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B),
+		TertiaryColor:  fmt.Sprintf("rgb(%d, %d, %d)", shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B),
+	}
+
+	// Execute the template with the color data
+	if err := tmpl.Execute(cssFile, data); err != nil {
+		return fmt.Errorf("failed to generate CSS: %w", err)
+	}
+
+	return nil
+}
+
 func (m *Manager) generateHTML(shop *models.Shop, targetPath string) error {
 	// Create HTML template
 	html := fmt.Sprintf(`<!DOCTYPE html>
@@ -243,114 +349,35 @@ func (m *Manager) generateHTML(shop *models.Shop, targetPath string) error {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>%s</title>
-    <style>
-        :root {
-            --primary-color: rgb(%d, %d, %d);
-            --secondary-color: rgb(%d, %d, %d);
-            --tertiary-color: rgb(%d, %d, %d);
-        }
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: var(--secondary-color);
-            color: var(--primary-color);
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        .shop-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .shop-logo {
-            max-width: 200px;
-            margin-bottom: 20px;
-        }
-        .items-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 20px;
-            padding: 20px;
-        }
-        .item-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            text-align: center;
-            background-color: white;
-        }
-        .item-image {
-            max-width: 100%%;
-            height: auto;
-            border-radius: 4px;
-        }
-        .item-name {
-            font-size: 1.2em;
-            margin: 10px 0;
-            color: var(--primary-color);
-        }
-        .item-price {
-            font-size: 1.1em;
-            color: var(--tertiary-color);
-            font-weight: bold;
-        }
-        .item-description {
-            color: #666;
-            margin: 10px 0;
-        }
-        .contact-info {
-            text-align: center;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #ddd;
-        }
-    </style>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.5.2/dist/web3.min.js"></script>
+    <script src="web3.js"></script>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <div class="shop-header">
+    <div class="shop-header">
+        %s
+        <h1>%s</h1>
+        <p>%s</p>
+        <div class="shop-info">
             %s
-            <h1>%s</h1>
-            <p>%s</p>
-            %s
-        </div>
-        
-        <div class="items-grid">
-            %s
-        </div>
-
-        <div class="contact-info">
             %s
         </div>
     </div>
+    <div class="items-grid">
+        %s
+    </div>
 </body>
 </html>`,
-		// Title
 		shop.Name,
-		// Colors
-		shop.PrimaryColor.R, shop.PrimaryColor.G, shop.PrimaryColor.B,
-		shop.SecondaryColor.R, shop.SecondaryColor.G, shop.SecondaryColor.B,
-		shop.TertiaryColor.R, shop.TertiaryColor.G, shop.TertiaryColor.B,
-		// Logo
 		m.generateLogoHTML(shop),
-		// Shop name and description
 		shop.Name,
 		shop.Description,
-		// Location
 		m.generateLocationHTML(shop),
-		// Items
-		m.generateItemsHTML(shop),
-		// Contact info
 		m.generateContactHTML(shop),
+		m.generateItemsHTML(shop),
 	)
 
-	// Write HTML to file
+	// Write the HTML file
 	if err := os.WriteFile(targetPath, []byte(html), 0644); err != nil {
 		return fmt.Errorf("failed to write HTML file: %w", err)
 	}
@@ -386,8 +413,9 @@ func (m *Manager) generateItemsHTML(shop *models.Shop) string {
                 <h3 class="item-name">%s</h3>
                 <p class="item-price">$%.2f</p>
                 <p class="item-description">%s</p>
+                <button class="eth-buy-button" data-item-id="%s" data-item-price="%.2f">Buy with MetaMask Wallet</button>
             </div>
-        `, images, item.Name, item.Price, item.Description)
+        `, images, item.Name, item.Price, item.Description, item.Name, item.Price)
 	}
 	return items
 }

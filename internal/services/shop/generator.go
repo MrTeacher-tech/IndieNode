@@ -2,6 +2,7 @@ package shop
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +28,19 @@ func NewGenerator(templatesDir string, orbitDB *orbitdb.Manager) (*Generator, er
 		templatesDir: templatesDir,
 		orbitDB:      orbitDB,
 	}, nil
+}
+
+// rgbaToHex converts a color.RGBA to CSS hex format
+func rgbaToHex(c color.RGBA) string {
+	return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
+}
+
+// templateData represents the data passed to templates with proper color formatting
+type templateData struct {
+	*models.Shop
+	PrimaryColor   string
+	SecondaryColor string
+	TertiaryColor  string
 }
 
 // GenerateShop generates a shop's files from templates and stores it in OrbitDB
@@ -59,20 +73,50 @@ func (g *Generator) GenerateShop(shop *models.Shop, outputDir string) error {
 		}
 	}
 
+	// Copy web3.js file
+	web3JsPath := filepath.Join(g.templatesDir, "basic", "web3.js")
+	if err := g.copyFile(web3JsPath, filepath.Join(outputDir, "src", "web3.js")); err != nil {
+		return fmt.Errorf("failed to copy web3.js: %w", err)
+	}
+
+	// Prepare template data with converted colors
+	data := templateData{
+		Shop:           shop,
+		PrimaryColor:   rgbaToHex(shop.PrimaryColor),
+		SecondaryColor: rgbaToHex(shop.SecondaryColor),
+		TertiaryColor:  rgbaToHex(shop.TertiaryColor),
+	}
+
 	// Generate HTML from template
-	tmpl, err := template.ParseFiles(filepath.Join(g.templatesDir, "shop.html"))
+	htmlTmpl, err := template.ParseFiles(filepath.Join(g.templatesDir, "basic", "basic.html"))
 	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
+		return fmt.Errorf("failed to parse HTML template: %w", err)
 	}
 
-	outputFile, err := os.Create(filepath.Join(outputDir, "index.html"))
+	outputHtmlFile, err := os.Create(filepath.Join(outputDir, "index.html"))
 	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
+		return fmt.Errorf("failed to create HTML output file: %w", err)
 	}
-	defer outputFile.Close()
+	defer outputHtmlFile.Close()
 
-	if err := tmpl.Execute(outputFile, shop); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
+	if err := htmlTmpl.Execute(outputHtmlFile, data); err != nil {
+		return fmt.Errorf("failed to execute HTML template: %w", err)
+	}
+
+	// Generate CSS from template
+	cssTmpl, err := template.ParseFiles(filepath.Join(g.templatesDir, "basic", "basic.css"))
+	if err != nil {
+		return fmt.Errorf("failed to parse CSS template: %w", err)
+	}
+
+	outputCssFile, err := os.Create(filepath.Join(outputDir, "styles.css"))
+	if err != nil {
+		return fmt.Errorf("failed to create CSS output file: %w", err)
+	}
+	defer outputCssFile.Close()
+
+	if err := cssTmpl.Execute(outputCssFile, data); err != nil {
+		return fmt.Errorf("failed to execute CSS template: %w", err)
 	}
 
 	// Store shop in OrbitDB

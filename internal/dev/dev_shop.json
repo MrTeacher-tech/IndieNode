@@ -1,0 +1,86 @@
+{
+    "Name": "Dev Test Shop",
+    "Description": "A sample shop for development and testing",
+    "OwnerAddress": "0x0000000000000000000000000000000000000000",
+    "Location": "Silicon Valley, CA",
+    "Email": "dev@example.com",
+    "Phone": "978-555-0123",
+    "PrimaryColor": {
+        "R": 255,
+        "G": 252,
+        "B": 233,
+        "A": 250
+    },
+    "SecondaryColor": {
+        "R": 29,
+        "G": 29,
+        "B": 29,
+        "A": 150
+    },
+    "TertiaryColor": {
+        "R": 90,
+        "G": 217,
+        "B": 213,
+        "A": 90
+    },
+    "LogoPath": "",
+    "LocalLogoPath": "",
+    "Items": [
+        {
+            "Name": "Premium Item 1",
+            "Description": "This is a high-quality item for testing",
+            "Price": 29.99,
+            "PhotoPaths": ["items/dev1.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev1.jpeg"]
+        },
+        {
+            "Name": "Premium Item 2",
+            "Description": "Another excellent product in our catalog",
+            "Price": 39.99,
+            "PhotoPaths": ["items/dev2.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev2.jpeg"]
+        },
+        {
+            "Name": "Premium Item 3",
+            "Description": "Top-tier product with amazing features",
+            "Price": 69.00,
+            "PhotoPaths": ["items/dev3.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev3.jpeg"]
+        },
+        {
+            "Name": "Premium Item 4",
+            "Description": "This is a great item for testing",
+            "Price": 12.99,
+            "PhotoPaths": ["items/dev4.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev4.jpeg"]
+        },
+        {
+            "Name": "Premium Item 5",
+            "Description": "Another product we offer for test purposes",
+            "Price": 34.49,
+            "PhotoPaths": ["items/dev5.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev5.jpeg"]
+        },
+        {
+            "Name": "Premium Item 6",
+            "Description": "Amazing product with cool features",
+            "Price": 99.99,
+            "PhotoPaths": ["items/dev6.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev6.jpeg"]
+        },
+        {
+            "Name": "Premium Item 7",
+            "Description": "This is for sale and for testing",
+            "Price": 34.49,
+            "PhotoPaths": ["items/dev7.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev7.jpeg"]
+        },
+        {
+            "Name": "Premium Item 8",
+            "Description": "You should buy this test item",
+            "Price": 99.99,
+            "PhotoPaths": ["items/dev8.jpeg"],
+            "LocalPhotoPaths": ["internal/dev/dev_images/dev8.jpeg"]
+        }
+    ]
+}

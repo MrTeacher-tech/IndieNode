@@ -111,28 +111,61 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 	}
 
 	// Color pickers
-	primaryColorPicker := components.NewColorButton("Primary Color", color.RGBA{R: 0xff, G: 0xfc, B: 0xe9, A: 0xff}, t.parent, func(c color.Color) {
+	primaryColorPicker := components.NewColorButton("Background Color", color.RGBA{R: 0xff, G: 0xfc, B: 0xe9, A: 0xff}, t.parent, func(c color.Color) {
 		if t.existingShop == nil {
 			t.existingShop = &models.Shop{}
 		}
-		r, g, b, _ := c.RGBA()
-		t.existingShop.PrimaryColor = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 255}
+		if rgba, ok := c.(color.RGBA); ok {
+			// Use the RGBA values directly if we get an RGBA color
+			t.existingShop.PrimaryColor = rgba
+		} else {
+			// Otherwise get the color components and scale them properly
+			r, g, b, _ := c.RGBA()
+			t.existingShop.PrimaryColor = color.RGBA{
+				R: uint8((r * 255) / 65535),
+				G: uint8((g * 255) / 65535),
+				B: uint8((b * 255) / 65535),
+				A: 255,
+			}
+		}
 	})
 
-	secondaryColorPicker := components.NewColorButton("Secondary Color", color.RGBA{R: 0x1d, G: 0x1d, B: 0x1d, A: 0xff}, t.parent, func(c color.Color) {
+	secondaryColorPicker := components.NewColorButton("Button Color", color.RGBA{R: 0x1d, G: 0x1d, B: 0x1d, A: 0xff}, t.parent, func(c color.Color) {
 		if t.existingShop == nil {
 			t.existingShop = &models.Shop{}
 		}
-		r, g, b, _ := c.RGBA()
-		t.existingShop.SecondaryColor = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 255}
+		if rgba, ok := c.(color.RGBA); ok {
+			// Use the RGBA values directly if we get an RGBA color
+			t.existingShop.SecondaryColor = rgba
+		} else {
+			// Otherwise get the color components and scale them properly
+			r, g, b, _ := c.RGBA()
+			t.existingShop.SecondaryColor = color.RGBA{
+				R: uint8((r * 255) / 65535),
+				G: uint8((g * 255) / 65535),
+				B: uint8((b * 255) / 65535),
+				A: 255,
+			}
+		}
 	})
 
-	tertiaryColorPicker := components.NewColorButton("Tertiary Color", color.RGBA{R: 0x5a, G: 0xd9, B: 0xd5, A: 0xff}, t.parent, func(c color.Color) {
+	tertiaryColorPicker := components.NewColorButton("Item Color", color.RGBA{R: 0x5a, G: 0xd9, B: 0xd5, A: 0xff}, t.parent, func(c color.Color) {
 		if t.existingShop == nil {
 			t.existingShop = &models.Shop{}
 		}
-		r, g, b, _ := c.RGBA()
-		t.existingShop.TertiaryColor = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 255}
+		if rgba, ok := c.(color.RGBA); ok {
+			// Use the RGBA values directly if we get an RGBA color
+			t.existingShop.TertiaryColor = rgba
+		} else {
+			// Otherwise get the color components and scale them properly
+			r, g, b, _ := c.RGBA()
+			t.existingShop.TertiaryColor = color.RGBA{
+				R: uint8((r * 255) / 65535),
+				G: uint8((g * 255) / 65535),
+				B: uint8((b * 255) / 65535),
+				A: 255,
+			}
+		}
 	})
 
 	// Logo upload button
@@ -158,15 +191,15 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 				widget.NewLabel("Theme Colors"),
 				container.NewGridWithColumns(3,
 					container.NewVBox(
-						widget.NewLabel("Primary:"),
+						widget.NewLabel("Background:"),
 						primaryColorPicker,
 					),
 					container.NewVBox(
-						widget.NewLabel("Secondary:"),
+						widget.NewLabel("Button:"),
 						secondaryColorPicker,
 					),
 					container.NewVBox(
-						widget.NewLabel("Tertiary:"),
+						widget.NewLabel("Item:"),
 						tertiaryColorPicker,
 					),
 				),
@@ -276,6 +309,7 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 		}
 
 		t.existingShop.Items = append(t.existingShop.Items, models.Item{
+			ID:              t.itemNameEntry.Text, // Using name as ID for now
 			Name:            t.itemNameEntry.Text,
 			Description:     t.itemDescEntry.Text,
 			Price:           price,
@@ -372,7 +406,12 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 
 func (t *ShopCreatorTab) createEditContent() fyne.CanvasObject {
 	content := t.createContent()
-	contentBox := content.(*fyne.Container)
+	
+	// Create a container to hold both the scroll content and the delete button
+	mainContainer := container.NewVBox()
+	
+	// Add the content
+	mainContainer.Add(content)
 
 	// Create a delete button
 	deleteBtn := widget.NewButton("Delete Shop", func() {
@@ -394,13 +433,13 @@ func (t *ShopCreatorTab) createEditContent() fyne.CanvasObject {
 	deleteBtn.Importance = widget.DangerImportance // Make the button red
 
 	// Add delete button at the bottom
-	contentBox.Add(widget.NewSeparator())
-	contentBox.Add(container.NewHBox(
+	mainContainer.Add(widget.NewSeparator())
+	mainContainer.Add(container.NewHBox(
 		layout.NewSpacer(),
 		deleteBtn,
 	))
 
-	return content
+	return mainContainer
 }
 
 func (t *ShopCreatorTab) handleLogoUpload() {
@@ -556,6 +595,7 @@ func (t *ShopCreatorTab) handleEditItem(id widget.ListItemID) {
 			}
 
 			t.existingShop.Items[id] = models.Item{
+				ID:              nameEntry.Text, // Using name as ID for now
 				Name:            nameEntry.Text,
 				Description:     descEntry.Text,
 				Price:           price,

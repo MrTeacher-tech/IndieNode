@@ -56,6 +56,7 @@ type MainWindow struct {
 	createShopTab *container.TabItem
 	viewShopsTab  *container.TabItem
 	settingsTab   *container.TabItem
+	welcomeTab    *container.TabItem
 }
 
 func NewMainWindow(app fyne.App, shopMgr *shop.Manager, ipfsMgr *ipfs.IPFSManager, authSvc *auth.Service) *MainWindow {
@@ -75,12 +76,14 @@ func (w *MainWindow) createUI() {
 	w.createMainMenu()
 
 	// Create the tabs
+	w.welcomeTab = NewWelcomeTab()
 	w.createShopTab = w.createShopForm()
 	w.viewShopsTab = w.createShopList()
 	w.settingsTab = NewSettingsTab(w.window, w.ipfsMgr)
 
-	// Create tabs container with both tabs
+	// Create tabs container with welcome tab first
 	w.tabs = container.NewAppTabs(
+		w.welcomeTab,
 		w.createShopTab,
 		w.viewShopsTab,
 		w.settingsTab,
@@ -93,21 +96,30 @@ func (w *MainWindow) createUI() {
 }
 
 func (w *MainWindow) createShopForm() *container.TabItem {
-	tabItem, _ := NewShopCreatorTab(w.window, w.shopMgr, w.ipfsMgr, func(shop *models.Shop) {
+	tabItem, shopCreator := NewShopCreatorTab(w.window, w.shopMgr, w.ipfsMgr, func(shop *models.Shop) {
 		// Set the owner address from the authenticated user
 		if user := w.authSvc.GetAuthenticatedUser(); user != nil {
 			shop.OwnerAddress = user.Address
 		}
 
+		// Save the shop
 		if err := w.shopMgr.SaveShop(shop); err != nil {
 			dialog.ShowError(err, w.window)
 			return
 		}
-		dialog.ShowInformation("Success", "Shop created successfully", w.window)
 
 		// Refresh the shop list
 		w.refreshShopList()
 	})
+
+	// Load current shop data
+	currentShop, err := w.shopMgr.LoadCurrentShop()
+	if err != nil {
+		dialog.ShowError(err, w.window)
+	} else if currentShop != nil {
+		shopCreator.LoadExistingShop(currentShop)
+	}
+
 	return tabItem
 }
 
@@ -213,7 +225,7 @@ func (w *MainWindow) createShopList() *container.TabItem {
 					return
 				}
 
-				editTab, tabContent := NewShopCreatorTab(w.window, w.shopMgr, w.ipfsMgr, func(updatedShop *models.Shop) {
+				tabItem, tabContent := NewShopCreatorTab(w.window, w.shopMgr, w.ipfsMgr, func(updatedShop *models.Shop) {
 					if updatedShop == nil {
 						// Shop was deleted
 						for i, item := range w.tabs.Items {
@@ -258,10 +270,10 @@ func (w *MainWindow) createShopList() *container.TabItem {
 				tabContent.LoadExistingShop(shop)
 
 				// Update the tab title
-				editTab.Text = "Edit Shop: " + shop.Name
+				tabItem.Text = "Edit Shop: " + shop.Name
 
-				w.tabs.Append(editTab)
-				w.tabs.Select(editTab)
+				w.tabs.Append(tabItem)
+				w.tabs.Select(tabItem)
 			}
 		},
 	)

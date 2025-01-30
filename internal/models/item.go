@@ -2,6 +2,7 @@ package models
 
 // Item represents a product or service in a shop
 type Item struct {
+	ID              string
 	Name            string
 	Price           float64
 	Description     string

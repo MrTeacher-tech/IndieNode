@@ -44,6 +44,7 @@ func (b *ColorButton) SetColor(c color.Color) {
 		b.currentColor = rgba
 		b.background.FillColor = rgba
 		b.background.Refresh()
+		b.Refresh() // Refresh the entire button to update text contrast
 	}
 }
 
@@ -76,19 +77,38 @@ func (b *ColorButton) Tapped(_ *fyne.PointEvent) {
 		return
 	}
 
-	picker := colorpicker.New(32, colorpicker.StyleHue)
+	picker := colorpicker.New(200, colorpicker.StyleHue)
+	// Convert our RGBA color to a normalized color.Color
+	r, g, bb, a := float64(b.currentColor.R)/255, float64(b.currentColor.G)/255, float64(b.currentColor.B)/255, float64(b.currentColor.A)/255
+	picker.SetColor(color.NRGBA{
+		R: uint8(r * 255),
+		G: uint8(g * 255),
+		B: uint8(bb * 255),
+		A: uint8(a * 255),
+	})
 	content := container.NewVBox(picker)
 
 	d := dialog.NewCustom("Choose Color", "Done", content, b.window)
 	
+	// Update button immediately when color changes
 	picker.SetOnChanged(func(c color.Color) {
+		var newColor color.RGBA
 		if rgba, ok := c.(color.RGBA); ok {
-			b.currentColor = rgba
-			b.background.FillColor = rgba
-			b.background.Refresh()
-			if b.onSelected != nil {
-				b.onSelected(rgba)
+			// If we get an RGBA color directly, use it
+			newColor = rgba
+		} else {
+			// Otherwise convert from the 16-bit color values
+			r, g, b, _ := c.RGBA()
+			newColor = color.RGBA{
+				R: uint8((r * 255) / 65535),
+				G: uint8((g * 255) / 65535),
+				B: uint8((b * 255) / 65535),
+				A: 255,
 			}
+		}
+		b.SetColor(newColor)
+		if b.onSelected != nil {
+			b.onSelected(newColor)
 		}
 	})
 

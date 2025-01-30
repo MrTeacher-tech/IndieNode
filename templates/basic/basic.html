@@ -4,6 +4,8 @@
     <title>{{.Name}}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.5.2/dist/web3.min.js"></script>
+    <script src="web3.js"></script>
 </head>
 <body>
     <div class="shop-header">
@@ -38,6 +40,9 @@
             <div class="item-name">{{.Name}}</div>
             <div class="item-price">${{printf "%.2f" .Price}}</div>
             <div class="item-description">{{.Description}}</div>
+            <button class="eth-buy-button" data-item-id="{{.ID}}" data-item-price="{{.Price}}">
+                Buy with ETH
+            </button>
         </div>
         {{end}}
     </div>
