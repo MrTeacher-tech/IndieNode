@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 const defaultPort = 3000
@@ -16,7 +17,10 @@ func (s *Service) StartServer(port int, authCallback func(address, message, sign
 	s.serverMutex.Lock()
 	defer s.serverMutex.Unlock()
 
+	log.Printf("Starting authentication server on port %d", port)
+
 	if s.isRunning {
+		log.Printf("Server is already running")
 		return fmt.Errorf("server is already running")
 	}
 
@@ -35,18 +39,25 @@ func (s *Service) StartServer(port int, authCallback func(address, message, sign
 
 	s.isRunning = true
 	go func() {
+		log.Printf("Starting to listen on port %d", port)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Server error: %v", err)
 			s.isRunning = false
 		}
 	}()
 
+	// Give the server a moment to start
+	time.Sleep(100 * time.Millisecond)
+
 	// Open browser
 	url := fmt.Sprintf("http://localhost:%d", port)
+	log.Printf("Opening browser at %s", url)
 	if err := s.OpenBrowser(url); err != nil {
+		log.Printf("Failed to open browser: %v", err)
 		return fmt.Errorf("failed to open browser: %w", err)
 	}
 
+	log.Printf("Authentication server started successfully")
 	return nil
 }
 
@@ -185,8 +196,8 @@ func (s *Service) serveHTML(w http.ResponseWriter, r *http.Request) {
                     params: [message, account[0]]
                 });
 
-                // Send to backend
-                const response = await fetch('/auth', {
+                // Send to backend with absolute URL
+                const response = await fetch('http://localhost:3000/auth', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -208,6 +219,7 @@ func (s *Service) serveHTML(w http.ResponseWriter, r *http.Request) {
                 }, 2000);
             } catch (error) {
                 updateStatus('Failed to sign message: ' + error.message, 'error');
+                console.error('Authentication error:', error);
             }
         }
 
@@ -230,7 +242,21 @@ func (s *Service) serveHTML(w http.ResponseWriter, r *http.Request) {
 // handleAuth handles the authentication callback
 func (s *Service) handleAuth(callback func(address, message, signature string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received auth request from %s", r.RemoteAddr)
+		
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		// Handle preflight request
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
 		if r.Method != http.MethodPost {
+			log.Printf("Method not allowed: %s", r.Method)
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -242,15 +268,31 @@ func (s *Service) handleAuth(callback func(address, message, signature string)) 
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&auth); err != nil {
+			log.Printf("Failed to decode request body: %v", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
+		}
+
+		log.Printf("Received auth data for address: %s", auth.Address)
+
+		// Send success response before calling callback
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "success"}); err != nil {
+			log.Printf("Failed to encode response: %v", err)
+			return
+		}
+		
+		// Ensure response is sent before potentially long-running callback
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
 		}
 
 		// Call the callback with the authentication data
 		if callback != nil {
 			callback(auth.Address, auth.Message, auth.Signature)
+		} else {
+			log.Printf("Warning: No callback provided for auth handler")
 		}
-
-		w.WriteHeader(http.StatusOK)
 	}
 }

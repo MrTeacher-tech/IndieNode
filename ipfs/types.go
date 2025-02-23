@@ -32,10 +32,10 @@ const (
 
 var DefaultGateways = []string{
 	"http://localhost:8080",        // Local gateway
+	"https://cloudflare-ipfs.com",  // Cloudflare gateway (most reliable)
+	"https://dweb.link",            // Alternative Cloudflare gateway
+	"https://gateway.ipfs.io",      // Protocol Labs gateway
 	"https://ipfs.io",              // Main IPFS gateway
-	"https://dweb.link",            // Cloudflare gateway
-	"https://gateway.pinata.cloud", // Pinata gateway
-	"https://cloudflare-ipfs.com",  // Alternative Cloudflare gateway
 }
 
 type IPFSManager struct {

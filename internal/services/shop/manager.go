@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"IndieNode/internal/models"
@@ -41,24 +42,24 @@ func (m *Manager) LoadCurrentShop() (*models.Shop, error) {
 		shopPath = filepath.Join(projectRoot, "internal", "dev", "dev_shop.json")
 	} else {
 		shopPath = filepath.Join(m.baseDir, "current_shop.json")
-		
+
 		// When not in dev mode, check if current shop matches dev shop
 		if _, err := os.Stat(shopPath); err == nil {
 			// Current shop exists, check if it matches dev shop
 			projectRoot := filepath.Dir(m.baseDir)
 			devShopPath := filepath.Join(projectRoot, "internal", "dev", "dev_shop.json")
-			
+
 			// Load both shops
 			currentData, err := os.ReadFile(shopPath)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read current shop: %w", err)
 			}
-			
+
 			devData, err := os.ReadFile(devShopPath)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read dev shop: %w", err)
 			}
-			
+
 			// Unmarshal both shops
 			var currentShop, devShop models.Shop
 			if err := json.Unmarshal(currentData, &currentShop); err != nil {
@@ -67,13 +68,13 @@ func (m *Manager) LoadCurrentShop() (*models.Shop, error) {
 			if err := json.Unmarshal(devData, &devShop); err != nil {
 				return nil, fmt.Errorf("failed to parse dev shop: %w", err)
 			}
-			
+
 			// Compare shops (ignoring owner address)
 			currentShop.OwnerAddress = ""
 			devShop.OwnerAddress = ""
 			currentJSON, _ := json.Marshal(currentShop)
 			devJSON, _ := json.Marshal(devShop)
-			
+
 			if string(currentJSON) == string(devJSON) {
 				// Current shop matches dev shop, clear it
 				if err := m.ClearCurrentShop(); err != nil {
@@ -113,6 +114,11 @@ func (m *Manager) LoadCurrentShop() (*models.Shop, error) {
 func (m *Manager) SaveCurrentShop(shop *models.Shop) error {
 	if shop == nil {
 		return fmt.Errorf("shop cannot be nil")
+	}
+
+	// Ensure URLName is set
+	if shop.URLName == "" {
+		shop.GenerateURLName()
 	}
 
 	data, err := json.MarshalIndent(shop, "", "    ")
@@ -185,6 +191,11 @@ func (m *Manager) SaveShop(shop *models.Shop) error {
 
 	if shop.Name == "" {
 		return fmt.Errorf("shop name cannot be empty")
+	}
+
+	// Ensure URLName is generated
+	if shop.URLName == "" {
+		shop.GenerateURLName()
 	}
 
 	shopDir := filepath.Join(m.baseDir, shop.Name)
@@ -304,7 +315,7 @@ func (m *Manager) DeleteShop(name string) error {
 // generateCSS generates the CSS file from the template
 func (m *Manager) generateCSS(shop *models.Shop, targetPath string) error {
 	// Read the CSS template
-	cssTemplate, err := os.ReadFile(filepath.Join("templates", "basic", "basic.css"))
+	cssTemplate, err := os.ReadFile(filepath.Join(filepath.Dir(m.baseDir), "templates", "basic", "basic.css"))
 	if err != nil {
 		return fmt.Errorf("failed to read CSS template: %w", err)
 	}
@@ -369,13 +380,9 @@ func (m *Manager) generateHTML(shop *models.Shop, targetPath string) error {
 </body>
 </html>`,
 		shop.Name,
-		m.generateLogoHTML(shop),
-		shop.Name,
-		shop.Description,
-		m.generateLocationHTML(shop),
-		m.generateContactHTML(shop),
-		m.generateItemsHTML(shop),
-	)
+		m.generateLogoHTML(shop), shop.Name, shop.Description,
+		m.generateLocationHTML(shop), m.generateContactHTML(shop),
+		m.generateItemsHTML(shop))
 
 	// Write the HTML file
 	if err := os.WriteFile(targetPath, []byte(html), 0644); err != nil {
@@ -389,7 +396,9 @@ func (m *Manager) generateLogoHTML(shop *models.Shop) string {
 	if shop.LogoPath == "" {
 		return ""
 	}
-	return fmt.Sprintf(`<img src="%s" alt="%s Logo" class="shop-logo">`, shop.LogoPath, shop.Name)
+	return fmt.Sprintf(`<img src="assets/logos/%s" alt="%s Logo" class="shop-logo">`,
+		filepath.Base(shop.LogoPath),
+		shop.Name)
 }
 
 func (m *Manager) generateLocationHTML(shop *models.Shop) string {
@@ -400,24 +409,39 @@ func (m *Manager) generateLocationHTML(shop *models.Shop) string {
 }
 
 func (m *Manager) generateItemsHTML(shop *models.Shop) string {
-	var items string
+	var itemsHTML strings.Builder
 	for _, item := range shop.Items {
-		var images string
+		// Generate image HTML
+		var imageHTML string
 		if len(item.PhotoPaths) > 0 {
-			images = fmt.Sprintf(`<img src="%s" alt="%s" class="item-image">`, item.PhotoPaths[0], item.Name)
+			imageHTML = fmt.Sprintf(`<img src="items/%s" alt="%s">`,
+				filepath.Base(item.PhotoPaths[0]),
+				item.Name)
 		}
 
-		items += fmt.Sprintf(`
-            <div class="item-card">
-                %s
-                <h3 class="item-name">%s</h3>
-                <p class="item-price">$%.2f</p>
-                <p class="item-description">%s</p>
-                <button class="eth-buy-button" data-item-id="%s" data-item-price="%.2f">Buy with MetaMask Wallet</button>
-            </div>
-        `, images, item.Name, item.Price, item.Description, item.Name, item.Price)
+		// Generate item card HTML
+		itemHTML := fmt.Sprintf(`
+		<div class="item-card">
+			%s
+			<div class="item-info">
+				<h3>%s</h3>
+				<p class="price">$%.2f</p>
+				<p class="description">%s</p>
+				<button class="eth-buy-button" data-item-id="%s" data-item-price="%.2f">
+					Buy with ETH
+				</button>
+			</div>
+		</div>`,
+			imageHTML,
+			item.Name,
+			item.Price,
+			item.Description,
+			item.ID,
+			item.Price)
+
+		itemsHTML.WriteString(itemHTML)
 	}
-	return items
+	return itemsHTML.String()
 }
 
 func (m *Manager) generateContactHTML(shop *models.Shop) string {

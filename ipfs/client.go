@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -85,6 +87,19 @@ func (m *IPFSManager) GetGatewayURL(hash string) string {
 
 		if gateway.Healthy {
 			gateway.LastUsed = time.Now()
+			
+			// For localhost, use subdomain-based addressing
+			if gateway.URL == "http://localhost:8080" {
+				// Convert CID to base32 for subdomain addressing
+				cmd := exec.Command("ipfs", "cid", "base32", hash)
+				output, err := cmd.Output()
+				if err == nil {
+					base32CID := strings.TrimSpace(string(output))
+					return fmt.Sprintf("http://%s.ipfs.localhost:8080/src/index.html", base32CID)
+				}
+			}
+			
+			// For other gateways, use path-based addressing
 			return gateway.URL + "/ipfs/" + hash + "/src/index.html"
 		}
 	}
@@ -141,7 +156,27 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 	}
 
 	// Get the gateway URL using the hash returned from AddDirectory
-	url := m.GetGatewayURL(hash)
+	gateway := m.GetGatewayURL(hash)
+
+	// Create metadata file
+	metadata := struct {
+		CID     string `json:"cid"`
+		Gateway string `json:"gateway"`
+	}{
+		CID:     hash,
+		Gateway: gateway,
+	}
+
+	// Save metadata to file
+	metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
+	metadataJSON, err := json.MarshalIndent(metadata, "", "    ")
+	if err != nil {
+		return "", fmt.Errorf("error marshaling metadata: %v", err)
+	}
+
+	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
+		return "", fmt.Errorf("error writing metadata file: %v", err)
+	}
 
 	// Update the shop.json with the new CID
 	err = updateShopCID(shopPath, hash)
@@ -149,6 +184,7 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 		return "", fmt.Errorf("error updating shop.json: %v", err)
 	}
 
+	url := gateway + "/ipfs/" + hash + "/src/index.html"
 	return url, nil
 }
 

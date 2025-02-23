@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -48,15 +49,17 @@ type ShopCreatorTab struct {
 	currentImages        []ImageMapping
 	existingShop         *models.Shop
 	onSave               func(*models.Shop)
+	onPublishSuccess     func(string)
 	parent               fyne.Window
 	deleteBtn            *widget.Button
 }
 
-func NewShopCreatorTab(parent fyne.Window, shopMgr *shop.Manager, ipfsMgr *ipfs.IPFSManager, onSave func(*models.Shop)) (*container.TabItem, *ShopCreatorTab) {
+func NewShopCreatorTab(parent fyne.Window, shopMgr *shop.Manager, ipfsMgr *ipfs.IPFSManager, onSave func(*models.Shop), onPublishSuccess func(string)) (fyne.CanvasObject, *ShopCreatorTab) {
 	tab := &ShopCreatorTab{
 		shopMgr:              shopMgr,
 		ipfsMgr:              ipfsMgr,
 		onSave:               onSave,
+		onPublishSuccess:     onPublishSuccess,
 		parent:               parent,
 		nameEntry:            widget.NewEntry(),
 		descriptionEntry:     widget.NewEntry(),
@@ -77,9 +80,16 @@ func NewShopCreatorTab(parent fyne.Window, shopMgr *shop.Manager, ipfsMgr *ipfs.
 	tab.descriptionContainer = container.NewVBox(tab.descriptionEntry)
 	tab.descriptionContainer.Resize(fyne.NewSize(400, 100))
 
+	// Check if there's an existing shop loaded
+	currentShop, err := shopMgr.LoadCurrentShop()
+	if err == nil && currentShop != nil {
+		tab.existingShop = currentShop
+		tab.LoadExistingShop(currentShop)
+		return tab.createEditContent(), tab
+	}
+
 	content := tab.createContent()
-	tabItem := container.NewTabItem("Create Shop", content)
-	return tabItem, tab
+	return content, tab
 }
 
 func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
@@ -358,7 +368,7 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 		}
 		return "nil"
 	}())
-	
+
 	if t.existingShop != nil && t.existingShop.Name != "" {
 		fmt.Println("Showing delete button")
 		t.deleteBtn.Show()
@@ -406,10 +416,10 @@ func (t *ShopCreatorTab) createContent() fyne.CanvasObject {
 
 func (t *ShopCreatorTab) createEditContent() fyne.CanvasObject {
 	content := t.createContent()
-	
+
 	// Create a container to hold both the scroll content and the delete button
 	mainContainer := container.NewVBox()
-	
+
 	// Add the content
 	mainContainer.Add(content)
 
@@ -479,13 +489,15 @@ func (t *ShopCreatorTab) handleSubmit() {
 	t.existingShop.Location = t.locationEntry.Text
 	t.existingShop.Email = t.emailEntry.Text
 	t.existingShop.Phone = t.phoneEntry.Text
-    
-    // Set both logo paths
-    if t.logoPath != "" {
-        t.existingShop.LocalLogoPath = t.logoPath
-        ext := filepath.Ext(t.logoPath)
-        t.existingShop.LogoPath = "assets/logos/logo" + ext
-    }
+	// Generate URL-safe name
+	t.existingShop.GenerateURLName()
+
+	// Set both logo paths
+	if t.logoPath != "" {
+		t.existingShop.LocalLogoPath = t.logoPath
+		ext := filepath.Ext(t.logoPath)
+		t.existingShop.LogoPath = "assets/logos/logo" + ext
+	}
 
 	if err := t.existingShop.Validate(); err != nil {
 		dialog.ShowError(err, t.parent)
@@ -637,12 +649,12 @@ func (t *ShopCreatorTab) generateShop() error {
 	t.existingShop.Email = t.emailEntry.Text
 	t.existingShop.Phone = t.phoneEntry.Text
 
-    // Set logo paths
-    if t.logoPath != "" {
-        t.existingShop.LocalLogoPath = t.logoPath
-        ext := filepath.Ext(t.logoPath)
-        t.existingShop.LogoPath = "assets/logos/logo" + ext
-    }
+	// Set logo paths
+	if t.logoPath != "" {
+		t.existingShop.LocalLogoPath = t.logoPath
+		ext := filepath.Ext(t.logoPath)
+		t.existingShop.LogoPath = "assets/logos/logo" + ext
+	}
 
 	// Generate the shop
 	if err := t.shopMgr.GenerateShop(t.existingShop); err != nil {
@@ -676,51 +688,78 @@ func (t *ShopCreatorTab) generateAndPublish() error {
 	// Get shop path
 	shopPath := t.shopMgr.GetShopPath(t.existingShop.Name)
 	htmlPath := filepath.Join(shopPath, "src", "index.html")
+	shopJsonPath := filepath.Join(shopPath, "shop.json")
 
 	// Publish to IPFS
-	cid, err := t.ipfsMgr.Publish(htmlPath, shopPath)
+	url, err := t.ipfsMgr.Publish(htmlPath, shopJsonPath)
 	if err != nil {
 		return fmt.Errorf("failed to publish to IPFS: %w", err)
 	}
 
-	// Get gateway URL
-	gatewayURL := t.ipfsMgr.GetGatewayURL(cid)
+	// Sanitize the URL before showing it
+	sanitizedURL := sanitizeIPFSURL(url)
 
-	// Show success dialog with the gateway URL
-	t.showPublishSuccessDialog(gatewayURL)
+	// Set the isPublished flag to true only after successful publish
+	t.existingShop.Published = true
+
+	// Call the publish success callback if it exists
+	if t.onPublishSuccess != nil {
+		t.onPublishSuccess(sanitizedURL)
+	}
 
 	return nil
 }
 
-// showPublishSuccessDialog shows a custom dialog with clickable URL and copy button
-func (t *ShopCreatorTab) showPublishSuccessDialog(gatewayURL string) {
-	// Create hyperlink
-	urlLink := widget.NewHyperlink("Open Shop Website", parseURL(gatewayURL))
-	
-	// Create copy button
-	copyBtn := widget.NewButton("Copy URL", func() {
-		t.parent.Clipboard().SetContent(gatewayURL)
-		dialog.ShowInformation("Success", "URL copied to clipboard!", t.parent)
-	})
+// sanitizeIPFSURL ensures the IPFS gateway URL is properly formatted without duplications
+func sanitizeIPFSURL(urlStr string) string {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return urlStr
+	}
 
-	// Create container with the link and copy button
-	content := container.NewVBox(
-		widget.NewLabel("Shop published successfully!"),
-		widget.NewLabel("Your shop is available at:"),
-		urlLink,
-		copyBtn,
-	)
+	// Extract the CID and the file path
+	parts := strings.Split(u.Path, "/ipfs/")
+	if len(parts) <= 1 {
+		return urlStr
+	}
 
-	// Show custom dialog
-	d := dialog.NewCustom("Success", "Close", content, t.parent)
-	d.Show()
+	// Find the last occurrence of "/ipfs/" and split the remaining path
+	lastPart := parts[len(parts)-1]
+	subParts := strings.Split(lastPart, "/")
+
+	// The CID should be the first part after /ipfs/
+	cid := subParts[0]
+
+	// Get the rest of the path (if any) after the CID
+	var finalPath string
+	if len(subParts) > 1 {
+		// Join all parts after the CID, excluding any duplicate paths
+		uniqueParts := []string{}
+		seen := make(map[string]bool)
+
+		for _, part := range subParts[1:] {
+			if !seen[part] {
+				uniqueParts = append(uniqueParts, part)
+				seen[part] = true
+			}
+		}
+
+		finalPath = strings.Join(uniqueParts, "/")
+	}
+
+	// Reconstruct the URL with the proper path
+	u.Path = fmt.Sprintf("/ipfs/%s/%s", cid, finalPath)
+	return u.String()
 }
 
 // helper function to safely parse URL
 func parseURL(urlStr string) *url.URL {
-	u, err := url.Parse(urlStr)
+	// First sanitize the URL
+	sanitized := sanitizeIPFSURL(urlStr)
+
+	u, err := url.Parse(sanitized)
 	if err != nil {
-		return &url.URL{Path: urlStr}
+		return &url.URL{Path: sanitized}
 	}
 	return u
 }
@@ -757,7 +796,7 @@ func (t *ShopCreatorTab) handleDeleteShop() {
 
 // LoadExistingShop loads an existing shop's data into the UI
 func (t *ShopCreatorTab) LoadExistingShop(shop *models.Shop) {
-    fmt.Printf("LoadExistingShop called with shop: %v, name: %s\n", shop != nil, shop.Name)
+	fmt.Printf("LoadExistingShop called with shop: %v, name: %s\n", shop != nil, shop.Name)
 	t.existingShop = shop
 
 	// Load basic shop details

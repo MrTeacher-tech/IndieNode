@@ -40,6 +40,31 @@ func NewLoginWindow(app fyne.App, authSvc *auth.Service, onSuccess func()) *Logi
 	w.window.SetFixedSize(true)
 	w.window.CenterOnScreen()
 
+	// Start auth server before creating UI
+	if err := w.authSvc.StartServer(3000, func(address, message, signature string) {
+		// Handle successful authentication
+		if err := w.authSvc.AuthenticateWithEthereum(address, message, signature); err != nil {
+			w.showError("Authentication failed: " + err.Error())
+			return
+		}
+
+		// Update UI for success
+		w.statusLabel.SetText("Successfully connected!")
+		w.loadingSpinner.Hide()
+
+		// Wait a moment before closing
+		time.Sleep(2 * time.Second)
+
+		// Call success callback and close window
+		if w.onSuccess != nil {
+			w.onSuccess()
+		}
+		w.Close()
+	}); err != nil {
+		// Show error dialog on server start failure
+		dialog.ShowError(fmt.Errorf("Failed to start authentication service: %v", err), w.window)
+	}
+
 	// Create UI
 	w.createUI()
 
@@ -97,43 +122,16 @@ func (w *LoginWindow) handleMetaMaskLogin() {
 	w.loadingSpinner.Show()
 	w.statusLabel.SetText("Connecting to MetaMask...")
 	w.statusLabel.Show()
-
-	// Start the authentication server
-	go func() {
-		err := w.authSvc.StartServer(3000, func(address, message, signature string) {
-			// Handle successful authentication
-			if err := w.authSvc.AuthenticateWithEthereum(address, message, signature); err != nil {
-				w.showError("Authentication failed: " + err.Error())
-				return
-			}
-
-			// Update UI for success
-			w.statusLabel.SetText("Successfully connected!")
-			w.loadingSpinner.Hide()
-
-			// Wait a moment before closing
-			time.Sleep(2 * time.Second)
-
-			// Call success callback and close window
-			if w.onSuccess != nil {
-				w.onSuccess()
-			}
-			w.Close()
-		})
-
-		if err != nil {
-			w.showError("Failed to start authentication: " + err.Error())
-		}
-	}()
 }
 
 // showError displays an error message and resets the UI
 func (w *LoginWindow) showError(message string) {
-	// Run UI updates on the main thread using Fyne's async mechanism
-	w.window.Canvas().Refresh(w.statusLabel)
 	w.statusLabel.SetText(message)
+	w.statusLabel.Show()
 	w.loadingSpinner.Hide()
 	w.connectButton.Enable()
+	
+	// Show error dialog
 	dialog.ShowError(fmt.Errorf(message), w.window)
 }
 

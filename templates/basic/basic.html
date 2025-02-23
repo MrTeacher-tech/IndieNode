@@ -34,17 +34,54 @@
         <div class="item-card">
             <div class="item-images">
                 {{range .PhotoPaths}}
-                    <img src="../{{.}}" class="item-image" alt="Product Image">
+                    <img src="../{{.}}" class="item-image" alt="Product Image" onclick="openModal(this.src)">
                 {{end}}
             </div>
-            <div class="item-name">{{.Name}}</div>
-            <div class="item-price">${{printf "%.2f" .Price}}</div>
-            <div class="item-description">{{.Description}}</div>
+            <div class="item-info">
+                <div class="item-name">{{.Name}}</div>
+                <div class="item-price">${{printf "%.2f" .Price}}</div>
+                <div class="item-description">{{.Description}}</div>
+            </div>
             <button class="eth-buy-button" data-item-id="{{.ID}}" data-item-price="{{.Price}}">
                 Buy with ETH
             </button>
         </div>
         {{end}}
     </div>
+
+    <!-- Modal structure -->
+    <div id="imageModal" class="modal">
+        <span class="close-modal" onclick="closeModal()">&times;</span>
+        <img class="modal-content" id="modalImage">
+    </div>
+
+    <script>
+        function openModal(imageSrc) {
+            const modal = document.getElementById("imageModal");
+            const modalImage = document.getElementById("modalImage");
+            modal.style.display = "block";
+            modalImage.src = imageSrc;
+        }
+
+        function closeModal() {
+            const modal = document.getElementById("imageModal");
+            modal.style.display = "none";
+        }
+
+        // Close modal when clicking outside of the image
+        window.onclick = function(event) {
+            const modal = document.getElementById("imageModal");
+            if (event.target == modal) {
+                closeModal();
+            }
+        }
+
+        // Close modal with the Escape key
+        window.addEventListener("keydown", function(event) {
+            if (event.key === "Escape") {
+                closeModal();
+            }
+        });
+    </script>
 </body>
 </html>

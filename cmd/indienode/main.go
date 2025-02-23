@@ -23,10 +23,10 @@ func copyDevShopToCurrentShop(shopBaseDir string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Get project root (parent of shops directory)
 	projectRoot := filepath.Dir(absShopBaseDir)
-	
+
 	// Source and destination paths
 	srcPath := filepath.Join(projectRoot, "internal", "dev", "dev_shop.json")
 	dstPath := filepath.Join(absShopBaseDir, "current_shop.json")
@@ -92,6 +92,14 @@ func main() {
 		log.Fatalf("Failed to initialize IPFS manager: %v", err)
 	}
 
+	// Start IPFS daemon when app starts
+	if err := ipfsMgr.StartDaemon(); err != nil {
+		log.Printf("Warning: Failed to start IPFS daemon: %v", err)
+	}
+
+	// We'll handle daemon shutdown in the window close interceptor only
+	// No need for lifecycle hook as it causes double-stopping
+
 	// Initialize shop manager with IPFS manager
 	shopMgr, err := shop.NewManager(shopBaseDir, ipfsMgr)
 	if err != nil {
@@ -106,16 +114,34 @@ func main() {
 		if err := copyDevShopToCurrentShop(shopBaseDir); err != nil {
 			log.Printf("Warning: Failed to copy dev shop template: %v", err)
 		}
-		
+
 		// Skip login in dev mode
 		authSvc.SetDevModeUser()
 		mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc)
+		mainWindow.SetCloseIntercept(func() {
+			// Only stop if daemon is running
+			if ipfsMgr.IsDaemonRunning() {
+				if err := ipfsMgr.StopDaemon(); err != nil {
+					log.Printf("Warning: Failed to stop IPFS daemon: %v", err)
+				}
+			}
+			mainWindow.Close()
+		})
 		mainWindow.Show()
 	} else {
 		// Create login window first
 		loginWindow := windows.NewLoginWindow(mainApp, authSvc, func() {
 			// This is called after successful login
 			mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc)
+			mainWindow.SetCloseIntercept(func() {
+				// Only stop if daemon is running
+				if ipfsMgr.IsDaemonRunning() {
+					if err := ipfsMgr.StopDaemon(); err != nil {
+						log.Printf("Warning: Failed to stop IPFS daemon: %v", err)
+					}
+				}
+				mainWindow.Close()
+			})
 			mainWindow.Show()
 		})
 		loginWindow.Show()

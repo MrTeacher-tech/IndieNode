@@ -80,12 +80,16 @@ func (s *Settings) createUI() {
 
 	s.daemonButton.OnTapped = s.handleDaemonControl
 
+	// New Install IPFS button
+	installButton := widget.NewButton("Install IPFS", s.handleInstallIPFS)
+
 	ipfsCard.SetContent(container.NewVBox(
 		pathLabel,
 		s.addressLabel,
 		widget.NewSeparator(),
 		s.statusLabel,
 		s.daemonButton,
+		installButton,
 	))
 	s.content.Add(ipfsCard)
 
@@ -102,6 +106,7 @@ func (s *Settings) createUI() {
 	// Initial updates
 	s.updateIPFSStatus()
 	s.updateAddressLabel()
+	s.updateInstallButtonVisibility(installButton)
 }
 
 func (s *Settings) handleDaemonControl() {
@@ -150,4 +155,27 @@ func (s *Settings) updateAddressLabel() {
 		s.addressLabel.SetText("Node Address: Not Running")
 	}
 	s.addressLabel.Refresh()
+}
+
+// New method to update the visibility of the Install IPFS button
+func (s *Settings) updateInstallButtonVisibility(installButton *widget.Button) {
+	installed, _ := s.ipfsMgr.IsIPFSDownloaded()
+	if installed {
+		installButton.Hide() // Hide the button if IPFS is installed
+	} else {
+		installButton.Show() // Show the button if IPFS is not installed
+	}
+}
+
+// New method to handle IPFS installation
+func (s *Settings) handleInstallIPFS() {
+	go func() {
+		if err := s.ipfsMgr.EnsureInstalled(); err != nil {
+			dialog.ShowError(err, s.window)
+			return
+		}
+		s.updateIPFSStatus() // Update status after installation
+		s.updateAddressLabel()
+		s.updateInstallButtonVisibility(s.daemonButton) // Update button visibility
+	}()
 }
