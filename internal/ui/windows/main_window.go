@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -91,6 +92,14 @@ func (w *MainWindow) createUI() {
 	// Create the tabs
 	w.welcomeTab = NewWelcomeTab()
 	content, shopCreator := NewShopCreatorTab(w.window, w.shopMgr, w.ipfsMgr, func(updatedShop *models.Shop) {
+		// If shop is nil, it means it was deleted
+		if updatedShop == nil {
+			w.refreshShopList()
+			// Switch to the shop list tab
+			w.tabs.Select(w.viewShopsTab)
+			return
+		}
+
 		// Set the owner address from the authenticated user
 		if user := w.authSvc.GetAuthenticatedUser(); user != nil {
 			updatedShop.OwnerAddress = user.Address
@@ -106,7 +115,11 @@ func (w *MainWindow) createUI() {
 		w.refreshShopList()
 	}, func(url string) {
 		// Handle publish success
-		w.showPublishSuccessDialog(url)
+		parts := strings.Split(url, "/ipfs/")
+		if len(parts) == 2 {
+			cid := strings.Split(parts[1], "/")[0]
+			w.showPublishSuccessDialog(url, cid)
+		}
 	})
 	w.shopCreator = shopCreator
 	w.createShopTab = container.NewTabItem("Create Shop", content)
@@ -272,7 +285,11 @@ func (w *MainWindow) createShopList() *container.TabItem {
 					w.refreshShopList()
 				}, func(url string) {
 					// Pass the main window's showPublishSuccessDialog
-					w.showPublishSuccessDialog(url)
+					parts := strings.Split(url, "/ipfs/")
+					if len(parts) == 2 {
+						cid := strings.Split(parts[1], "/")[0]
+						w.showPublishSuccessDialog(url, cid)
+					}
 				})
 
 				// Load the existing shop data into the tab content
@@ -401,9 +418,18 @@ func (w *MainWindow) refreshShopList() {
 				}
 
 				if isPublished && cid != "" {
-					url := gateway + "/ipfs/" + cid + "/src/index.html"
+					fmt.Printf("[DEBUG] Shop is published with CID: %s\n", cid)
+					fmt.Printf("[DEBUG] Gateway URL: %s\n", gateway)
+					
+					// The gateway URL might already contain /src/index.html, so check and remove if needed
+					url := gateway
+					if !strings.HasSuffix(url, "/src/index.html") {
+						url += "/src/index.html"
+					}
+					
+					fmt.Printf("[DEBUG] Final URL: %s\n", url)
 					fmt.Printf("Shop %s is already published at: %s\n", info.name, url)
-					w.showPublishSuccessDialog(url)
+					w.showPublishSuccessDialog(url, cid)
 					publishBtn.SetText("URL Info")
 					info.isPublished = true
 					w.buttonMap[info.name] = publishBtn
@@ -421,7 +447,12 @@ func (w *MainWindow) refreshShopList() {
 				}
 
 				fmt.Printf("Successfully published shop %s at: %s\n", info.name, url)
-				w.showPublishSuccessDialog(url)
+				// Extract CID from the URL
+				parts := strings.Split(url, "/ipfs/")
+				if len(parts) == 2 {
+					cid := strings.Split(parts[1], "/")[0]
+					w.showPublishSuccessDialog(url, cid)
+				}
 
 				// Update button state
 				publishBtn.SetText("URL Info")
@@ -518,7 +549,11 @@ func (w *MainWindow) refreshShopList() {
 				w.refreshShopList()
 			}, func(url string) {
 				// Pass the main window's showPublishSuccessDialog
-				w.showPublishSuccessDialog(url)
+				parts := strings.Split(url, "/ipfs/")
+				if len(parts) == 2 {
+					cid := strings.Split(parts[1], "/")[0]
+					w.showPublishSuccessDialog(url, cid)
+				}
 			})
 
 			// Create new tab item
@@ -533,7 +568,10 @@ func (w *MainWindow) refreshShopList() {
 	list.Refresh()
 }
 
-func (w *MainWindow) showPublishSuccessDialog(url string) {
+func (w *MainWindow) showPublishSuccessDialog(url string, cid string) {
+	// Reinitialize gateways to ensure we have the latest list
+	w.ipfsMgr.ReinitializeGateways()
+
 	// Sanitize the URL first
 	sanitizedURL := sanitizeIPFSURL(url)
 
@@ -556,24 +594,36 @@ func (w *MainWindow) showPublishSuccessDialog(url string) {
 	img.FillMode = canvas.ImageFillOriginal
 	img.SetMinSize(fyne.NewSize(256, 256))
 
-	// Create hyperlink with sanitized URL
-	urlLink := widget.NewHyperlink("Open Shop Website", parseURL(url))
-
-	// Create copy button with sanitized URL
-	copyBtn := widget.NewButton("Copy URL", func() {
-		w.window.Clipboard().SetContent(sanitizedURL)
-		dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
-	})
-
-	// Create container with the link and copy button
+	// Create container with gateway URLs and copy buttons
 	content := container.NewVBox(
 		widget.NewLabel("Shop published successfully!"),
-		widget.NewLabel("Scan QR code or use URL below:"),
+		widget.NewLabel("Scan QR code or use one of the URLs below:"),
 		img,
-		widget.NewLabel(sanitizedURL),
-		urlLink,
-		copyBtn,
+		widget.NewLabel("Available Gateways:"),
 	)
+
+	// Add each gateway URL with its own copy button
+	for _, gateway := range w.ipfsMgr.GetGateways() {
+		if !gateway.Healthy {
+			continue
+		}
+
+		gatewayURL := gateway.URL + "/ipfs/" + cid + "/src/index.html"
+		urlContainer := container.NewHBox(
+			widget.NewLabel(gateway.URL),
+			widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+				w.window.Clipboard().SetContent(gatewayURL)
+				dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
+			}),
+		)
+
+		// Add "Recommended" label for Protocol Labs main gateway
+		if gateway.URL == "https://ipfs.io" {
+			urlContainer.Add(widget.NewLabelWithStyle(" (Recommended)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}))
+		}
+
+		content.Add(urlContainer)
+	}
 
 	// Show custom dialog
 	d := dialog.NewCustom("Success", "Close", content, w.window)
@@ -606,13 +656,14 @@ func (w *MainWindow) Close() {
 // updatePublishButtonState updates the state and behavior of a publish button based on shop publication status
 func (w *MainWindow) updatePublishButtonState(publishBtn *widget.Button, shopName string) {
 	shopDir := w.shopMgr.GetShopPath(shopName)
-	isPublished, cid, gateway, _ := w.ipfsMgr.CheckShopPublication(shopDir)
+	isPublished, cid, _, _ := w.ipfsMgr.CheckShopPublication(shopDir)
 
 	if isPublished && cid != "" {
 		publishBtn.SetText("URL Info")
 		publishBtn.OnTapped = func() {
-			url := gateway + "/ipfs/" + cid + "/src/index.html"
-			w.showPublishSuccessDialog(url)
+			// Use Protocol Labs main gateway for already published shops
+			url := "https://ipfs.io/ipfs/" + cid + "/src/index.html"
+			w.showPublishSuccessDialog(url, cid)
 		}
 	} else {
 		publishBtn.SetText("Publish")
@@ -627,7 +678,11 @@ func (w *MainWindow) updatePublishButtonState(publishBtn *widget.Button, shopNam
 				return
 			}
 
-			w.showPublishSuccessDialog(url)
+			parts := strings.Split(url, "/ipfs/")
+			if len(parts) == 2 {
+				cid := strings.Split(parts[1], "/")[0]
+				w.showPublishSuccessDialog(url, cid)
+			}
 			w.updatePublishButtonState(publishBtn, shopName) // Update button state after publishing
 		}
 	}

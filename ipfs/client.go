@@ -1,10 +1,9 @@
 package ipfs
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
+
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,20 +36,39 @@ func (m *IPFSManager) AddFile(path string) (string, error) {
 }
 
 func (m *IPFSManager) AddDirectory(path string) (string, error) {
-	if m.Shell == nil {
-		return "", fmt.Errorf("IPFS shell not initialized")
+	if m.BinaryPath == "" {
+		return "", fmt.Errorf("IPFS binary not found")
 	}
 
-	// Add directory to IPFS
-	hash, err := m.Shell.AddDir(path)
+	// Add directory to IPFS using command
+	cmd := exec.Command(m.BinaryPath, "add", "-r", "-Q", path)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to add directory %s to IPFS: %w", path, err)
 	}
+	hash := strings.TrimSpace(string(output))
+	fmt.Printf("Successfully added directory to IPFS with hash: %s\n", hash)
 
-	// Pin the content to ensure persistence
-	if err := m.Shell.Pin(hash); err != nil {
-		return "", fmt.Errorf("failed to pin content: %w", err)
+	// Pin the content
+	cmd = exec.Command(m.BinaryPath, "pin", "add", hash)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to pin content with hash %s: %w", hash, err)
 	}
+	fmt.Printf("Successfully pinned content with hash: %s\n", hash)
+
+	// Verify the pin exists
+	cmd = exec.Command(m.BinaryPath, "pin", "ls", "--type", "recursive")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	output, err = cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("error verifying pin: %w", err)
+	}
+	if !strings.Contains(string(output), hash) {
+		return "", fmt.Errorf("pin verification failed for hash: %s", hash)
+	}
+	fmt.Printf("Verified pin exists for hash: %s\n", hash)
 
 	return hash, nil
 }
@@ -59,12 +77,16 @@ func (m *IPFSManager) GetGatewayURL(hash string) string {
 	m.gatewayLock.Lock()
 	defer m.gatewayLock.Unlock()
 
+	fmt.Printf("[DEBUG] Getting gateway URL for hash: %s\n", hash)
+
 	// Initialize gateways if needed
 	if len(m.gateways) == 0 {
+		fmt.Printf("[DEBUG] No gateways found, initializing...\n")
 		gateways := DefaultGateways
 		if m.Shell != nil && m.IsDaemonRunning() {
+			fmt.Printf("[DEBUG] Daemon is running, adding local gateway\n")
 			// Add local gateway first if daemon is running
-			gateways = append([]string{"http://localhost:8080"}, gateways...)
+			gateways = append([]string{"http://127.0.0.1:8080"}, gateways...)
 		}
 
 		for _, url := range gateways {
@@ -76,87 +98,52 @@ func (m *IPFSManager) GetGatewayURL(hash string) string {
 		}
 	}
 
-	// Try to find a healthy gateway
+	// First try to find a healthy gateway
 	for i := range m.gateways {
 		gateway := &m.gateways[i]
-
-		// Check health if it hasn't been used recently
-		if time.Since(gateway.LastUsed) > time.Minute {
-			gateway.Healthy = m.checkGatewayHealth(gateway.URL)
+		if gateway.URL == "" {
+			continue
 		}
 
 		if gateway.Healthy {
 			gateway.LastUsed = time.Now()
-			
-			// For localhost, use subdomain-based addressing
-			if gateway.URL == "http://localhost:8080" {
-				// Convert CID to base32 for subdomain addressing
-				cmd := exec.Command("ipfs", "cid", "base32", hash)
-				output, err := cmd.Output()
-				if err == nil {
-					base32CID := strings.TrimSpace(string(output))
-					return fmt.Sprintf("http://%s.ipfs.localhost:8080/src/index.html", base32CID)
-				}
-			}
-			
-			// For other gateways, use path-based addressing
-			return gateway.URL + "/ipfs/" + hash + "/src/index.html"
+			fmt.Printf("[DEBUG] Using healthy gateway: %s\n", gateway.URL)
+			// Don't add /src/index.html here - let the caller handle the full path
+			return strings.TrimRight(gateway.URL, "/") + "/ipfs/" + hash
 		}
 	}
 
-	// If no healthy gateway found, return the first one (with warning)
-	fmt.Printf("Warning: No healthy IPFS gateways found, using first available\n")
-	return m.gateways[0].URL + "/ipfs/" + hash + "/src/index.html"
-}
-
-func (m *IPFSManager) checkGatewayHealth(gateway string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", gateway+"/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme", nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	return resp.StatusCode == 200
-}
-
-func (m *IPFSManager) AddCustomGateway(url string) {
-	m.gatewayLock.Lock()
-	defer m.gatewayLock.Unlock()
-
-	// Check if gateway already exists
-	for _, g := range m.gateways {
-		if g.URL == url {
-			return
-		}
-	}
-
-	m.gateways = append(m.gateways, GatewayStatus{
-		URL:      url,
-		Healthy:  true,
-		LastUsed: time.Time{},
-	})
+	// If no healthy gateway found, use ipfs.io as fallback
+	fmt.Printf("[DEBUG] No healthy gateways found, using ipfs.io\n")
+	return "https://ipfs.io/ipfs/" + hash
 }
 
 func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) {
+	if !m.IsDaemonRunning() {
+		return "", fmt.Errorf("IPFS daemon is not running")
+	}
+
 	// Get the shop directory path (parent of src)
 	shopDir := filepath.Dir(filepath.Dir(htmlPath))
+	fmt.Printf("Publishing shop from directory: %s\n", shopDir)
 
 	// Use IPFS to add the entire shop directory
 	hash, err := m.AddDirectory(shopDir)
 	if err != nil {
 		return "", fmt.Errorf("error adding directory to IPFS: %v", err)
 	}
+	fmt.Printf("Added directory to IPFS with hash: %s\n", hash)
 
-	// Get the gateway URL using the hash returned from AddDirectory
-	gateway := m.GetGatewayURL(hash)
+	// Get the gateway URL
+	baseURL := m.GetGatewayURL(hash)
+	fmt.Printf("Base gateway URL: %s\n", baseURL)
+
+	// List directory contents to verify structure
+	cmd := exec.Command(m.BinaryPath, "ls", hash)
+	output, err := cmd.Output()
+	if err == nil {
+		fmt.Printf("Directory contents:\n%s\n", string(output))
+	}
 
 	// Create metadata file
 	metadata := struct {
@@ -164,7 +151,7 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 		Gateway string `json:"gateway"`
 	}{
 		CID:     hash,
-		Gateway: gateway,
+		Gateway: baseURL + "/src/index.html",
 	}
 
 	// Save metadata to file
@@ -177,15 +164,18 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
 		return "", fmt.Errorf("error writing metadata file: %v", err)
 	}
+	fmt.Printf("Saved metadata to: %s\n", metadataPath)
 
 	// Update the shop.json with the new CID
 	err = updateShopCID(shopPath, hash)
 	if err != nil {
 		return "", fmt.Errorf("error updating shop.json: %v", err)
 	}
+	fmt.Printf("Updated shop.json with new CID\n")
 
-	url := gateway + "/ipfs/" + hash + "/src/index.html"
-	return url, nil
+	finalURL := baseURL + "/src/index.html"
+	fmt.Printf("Final URL: %s\n", finalURL)
+	return finalURL, nil
 }
 
 func updateShopCID(shopPath string, cid string) error {
@@ -213,7 +203,30 @@ func updateShopCID(shopPath string, cid string) error {
 	return os.WriteFile(shopPath, updatedJSON, 0644)
 }
 
-// CheckShopPublication checks if a shop has been published by looking for ipfs_metadata.json
+func (m *IPFSManager) checkGatewayHealth(gateway string) bool {
+	// For now, assume all gateways are healthy
+	// We can implement more sophisticated health checks later
+	return true
+}
+
+func (m *IPFSManager) AddCustomGateway(url string) {
+	m.gatewayLock.Lock()
+	defer m.gatewayLock.Unlock()
+
+	// Check if gateway already exists
+	for _, g := range m.gateways {
+		if g.URL == url {
+			return
+		}
+	}
+
+	m.gateways = append(m.gateways, GatewayStatus{
+		URL:      url,
+		Healthy:  true,
+		LastUsed: time.Time{},
+	})
+}
+
 func (m *IPFSManager) CheckShopPublication(shopDir string) (isPublished bool, cid string, gateway string, err error) {
 	metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
 
@@ -239,15 +252,38 @@ func (m *IPFSManager) CheckShopPublication(shopDir string) (isPublished bool, ci
 	return true, metadata.CID, metadata.Gateway, nil
 }
 
-// UnpublishContent unpins content from IPFS using its CID
-func (m *IPFSManager) UnpublishContent(cid string) error {
+func (m *IPFSManager) RunGarbageCollection() error {
 	if m.Shell == nil {
 		return fmt.Errorf("IPFS shell not initialized")
 	}
 
-	// Unpin the content
-	if err := m.Shell.Unpin(cid); err != nil {
-		return fmt.Errorf("failed to unpin content: %w", err)
+	// Run garbage collection using 'repo gc' command
+	cmd := exec.Command(m.BinaryPath, "repo", "gc")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to run garbage collection: %w (output: %s)", err, string(output))
+	}
+
+	return nil
+}
+
+func (m *IPFSManager) UnpublishContent(cid string) error {
+	if m.BinaryPath == "" {
+		return fmt.Errorf("IPFS binary not found")
+	}
+
+	// Unpin the content using CLI command
+	cmd := exec.Command(m.BinaryPath, "pin", "rm", cid)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to unpin content: %w (output: %s)", err, string(output))
+	}
+	fmt.Printf("Successfully unpinned content with CID: %s\n", cid)
+
+	// Run garbage collection after unpinning
+	if err := m.RunGarbageCollection(); err != nil {
+		// Log the error but don't fail the unpublish operation
+		fmt.Printf("Warning: failed to run garbage collection: %v\n", err)
 	}
 
 	return nil
@@ -259,4 +295,53 @@ func (m *IPFSManager) GetIPFSNode() (interface{}, error) {
 	}
 
 	return m.Shell, nil
+}
+
+func (m *IPFSManager) GetGateways() []GatewayStatus {
+	m.gatewayLock.RLock()
+	defer m.gatewayLock.RUnlock()
+
+	// Initialize gateways if needed
+	if len(m.gateways) == 0 {
+		m.gatewayLock.RUnlock()
+		m.gatewayLock.Lock()
+		for _, url := range DefaultGateways {
+			m.gateways = append(m.gateways, GatewayStatus{
+				URL:      url,
+				Healthy:  true,
+				LastUsed: time.Time{},
+			})
+		}
+		m.gatewayLock.Unlock()
+		m.gatewayLock.RLock()
+	}
+
+	// Make a copy to avoid external modifications
+	gateways := make([]GatewayStatus, len(m.gateways))
+	copy(gateways, m.gateways)
+
+	// Update health status for all gateways
+	for i := range gateways {
+		if time.Since(gateways[i].LastUsed) > time.Minute {
+			gateways[i].Healthy = m.checkGatewayHealth(gateways[i].URL)
+		}
+	}
+
+	return gateways
+}
+
+func (m *IPFSManager) ReinitializeGateways() {
+	m.gatewayLock.Lock()
+	defer m.gatewayLock.Unlock()
+
+	m.gateways = nil // Clear existing gateways
+
+	// Reinitialize with current DefaultGateways
+	for _, url := range DefaultGateways {
+		m.gateways = append(m.gateways, GatewayStatus{
+			URL:      url,
+			Healthy:  true,
+			LastUsed: time.Time{},
+		})
+	}
 }

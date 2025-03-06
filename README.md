@@ -31,3 +31,22 @@ tabItem = container.NewTabItemWithIcon(...)
 
 // After (fixed)
 newTabItem := container.NewTabItemWithIcon(...)
+
+Notes from yesterday:
+What we fixed today:
+
+Gateway URLs - Fixed the double path issue (/ipfs/cid/src/index.html/src/index.html)
+Port configuration - Ensured correct ports (5001 for API, 8080 for gateway)
+URL construction - Added proper checks to avoid path duplication
+Still needs fixing:
+
+CSS/JS not loading issue
+Likely cause: IPFS directory structure handling in AddDirectory() function
+Potential fix: Add --wrap-with-directory flag to ipfs add command or check how directory structure is being preserved
+Next steps:
+
+Check the IPFS directory structure output (from ipfs ls <hash>)
+Compare with previous working version's structure
+Adjust how we publish directories to match the working structure
+
+

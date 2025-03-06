@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	IPFSVersion          = "v0.22.0"
+	IPFSVersion          = "v0.33.2"
 	IPFSDataDir          = ".ipfs"
 	MinCompatibleVersion = "v0.20.0" // Minimum IPFS version we support
 )
@@ -31,11 +31,10 @@ const (
 )
 
 var DefaultGateways = []string{
-	"http://localhost:8080",        // Local gateway
-	"https://cloudflare-ipfs.com",  // Cloudflare gateway (most reliable)
-	"https://dweb.link",            // Alternative Cloudflare gateway
-	"https://gateway.ipfs.io",      // Protocol Labs gateway
-	"https://ipfs.io",              // Main IPFS gateway
+	"https://ipfs.io",         // Protocol Labs main gateway (most reliable)
+	"https://gateway.ipfs.io", // Protocol Labs alternative gateway
+	"https://dweb.link",       // Protocol Labs dweb gateway
+	"https://nftstorage.link", // NFT.Storage gateway
 }
 
 type IPFSManager struct {
@@ -52,7 +51,6 @@ type IPFSManager struct {
 
 type Config struct {
 	CustomBinaryPath string
-	CustomDataPath   string
 	CustomGateways   []string
 }
 

@@ -1,6 +1,7 @@
 package ipfs
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,11 +16,37 @@ func (m *IPFSManager) Initialize() error {
 		return nil
 	}
 
-	if _, err := os.Stat(filepath.Join(m.DataPath, "config")); os.IsNotExist(err) {
+	// Create data directory if it doesn't exist
+	if err := os.MkdirAll(m.DataPath, 0755); err != nil {
+		return fmt.Errorf("failed to create IPFS data directory: %v", err)
+	}
+
+	// Check if IPFS is already initialized in our custom directory
+	configPath := filepath.Join(m.DataPath, "config")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Initialize IPFS with our custom data directory
 		cmd := exec.Command(m.BinaryPath, "init")
 		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to initialize IPFS: %v", err)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to initialize IPFS: %v (output: %s)", err, string(output))
+		}
+
+		// Configure the addresses one at a time
+		configCommands := []struct {
+			args []string
+			desc string
+		}{
+			{[]string{"config", "Addresses.API", "/ip4/127.0.0.1/tcp/5001"}, "API address"},
+			{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws"]`}, "Swarm addresses"},
+		}
+
+		for _, cmd := range configCommands {
+			command := exec.Command(m.BinaryPath, cmd.args...)
+			command.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+			if output, err := command.CombinedOutput(); err != nil {
+				return fmt.Errorf("failed to configure IPFS %s: %v (output: %s)", cmd.desc, err, string(output))
+			}
+			fmt.Printf("Successfully configured %s\n", cmd.desc)
 		}
 	}
 
@@ -32,18 +59,68 @@ func (m *IPFSManager) StartDaemon() error {
 		return nil
 	}
 
-	// Create data directory if it doesn't exist
-	if err := os.MkdirAll(m.DataPath, 0755); err != nil {
-		return fmt.Errorf("failed to create IPFS data directory: %v", err)
-	}
-
+	// Initialize IPFS if not already done
 	if err := m.Initialize(); err != nil {
-		return err
+		return fmt.Errorf("failed to initialize IPFS: %v", err)
 	}
 
 	m.Status = DaemonStarting
+	fmt.Printf("[DEBUG] Starting IPFS daemon with IPFS_PATH=%s\n", m.DataPath)
+
+	// Clear and reinitialize gateways
+	fmt.Printf("[DEBUG] Reinitializing gateways...\n")
+	m.ReinitializeGateways()
+
+	// Configure ports:
+	// API port (5001) - for sending commands to IPFS
+	// Gateway port (8080) - for accessing content
+	// Swarm ports (4001/tcp, 8081/ws) - for peer connections
+	fmt.Printf("[DEBUG] Configuring IPFS ports...\n")
+	configCommands := []struct {
+		args []string
+		desc string
+	}{
+		{[]string{"config", "Addresses.API", "/ip4/127.0.0.1/tcp/5001"}, "API address"},
+		{[]string{"config", "Addresses.Gateway", "/ip4/127.0.0.1/tcp/8080"}, "Gateway address"},
+		{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws"]`}, "Swarm addresses"},
+	}
+
+	for _, cmd := range configCommands {
+		command := exec.Command(m.BinaryPath, cmd.args...)
+		command.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+		if output, err := command.CombinedOutput(); err != nil {
+			fmt.Printf("[ERROR] Failed to configure IPFS %s: %v (output: %s)\n", cmd.desc, err, string(output))
+		} else {
+			fmt.Printf("[DEBUG] Successfully configured %s\n", cmd.desc)
+		}
+	}
+
 	m.Daemon = exec.Command(m.BinaryPath, "daemon")
 	m.Daemon.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+
+	// Capture stdout and stderr
+	output, err := m.Daemon.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+	errOutput, err := m.Daemon.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
+
+	// Start reading output in goroutines
+	go func() {
+		scanner := bufio.NewScanner(output)
+		for scanner.Scan() {
+			fmt.Printf("IPFS daemon stdout: %s\n", scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(errOutput)
+		for scanner.Scan() {
+			fmt.Printf("IPFS daemon stderr: %s\n", scanner.Text())
+		}
+	}()
 
 	if err := m.Daemon.Start(); err != nil {
 		m.Status = DaemonStopped
@@ -51,12 +128,21 @@ func (m *IPFSManager) StartDaemon() error {
 	}
 
 	// Wait for daemon to start and API to be available
+	fmt.Println("Waiting for IPFS daemon to start...")
 	for i := 0; i < 30; i++ {
 		if sh := shell.NewShell("localhost:5001"); sh != nil {
-			if _, err := sh.ID(); err == nil {
-				m.Shell = sh
-				m.Status = DaemonRunning
-				return nil
+			if info, err := sh.ID(); err == nil {
+				// Verify we have addresses configured
+				if len(info.Addresses) > 0 {
+					fmt.Printf("IPFS daemon started successfully. Node ID: %s\n", info.ID)
+					fmt.Printf("Addresses: %v\n", info.Addresses)
+					m.Shell = sh
+					m.Status = DaemonRunning
+					return nil
+				}
+				fmt.Println("IPFS daemon running but no addresses configured")
+			} else {
+				fmt.Printf("Attempt %d: API not ready: %v\n", i+1, err)
 			}
 		}
 		time.Sleep(time.Second)
@@ -87,6 +173,9 @@ func (m *IPFSManager) StopDaemon() error {
 			return fmt.Errorf("daemon exit error: %w", err)
 		}
 	}
+
+	// Clear gateways
+	m.ClearGateways()
 
 	m.Daemon = nil
 	m.Status = DaemonStopped
@@ -131,4 +220,34 @@ func (m *IPFSManager) GetNodeInfo() (string, []string, error) {
 	}
 
 	return info.ID, info.Addresses, nil
+}
+
+func (m *IPFSManager) ConfigureGateway() error {
+	cmd := exec.Command(m.BinaryPath, "config", "Addresses.Gateway", "/ip4/127.0.0.1/tcp/8080")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to configure gateway: %v (output: %s)", err, string(output))
+	}
+	fmt.Printf("Successfully configured gateway address\n")
+	return nil
+}
+
+func (m *IPFSManager) ClearGateways() {
+	// Clear gateways
+	configCommands := []struct {
+		args []string
+		desc string
+	}{
+		{[]string{"config", "Addresses.Gateway", ""}, "Gateway address"},
+	}
+
+	for _, cmd := range configCommands {
+		command := exec.Command(m.BinaryPath, cmd.args...)
+		command.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+		if output, err := command.CombinedOutput(); err != nil {
+			fmt.Printf("Failed to clear IPFS %s: %v (output: %s)\n", cmd.desc, err, string(output))
+		} else {
+			fmt.Printf("Successfully cleared %s\n", cmd.desc)
+		}
+	}
 }

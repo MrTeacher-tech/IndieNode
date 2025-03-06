@@ -4,12 +4,15 @@ import (
 	"IndieNode/internal/services/auth"
 	"IndieNode/ipfs"
 	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -24,6 +27,9 @@ type Settings struct {
 	networkModeLabel   *widget.Label
 	shopsCountLabel    *widget.Label
 	content            *fyne.Container
+	pathLabel          *widget.Label
+	installButton      *widget.Button
+	daemonContainer    *fyne.Container
 }
 
 func NewSettingsTab(window fyne.Window, ipfsMgr *ipfs.IPFSManager) *container.TabItem {
@@ -72,24 +78,141 @@ func (s *Settings) createUI() {
 
 	// IPFS Settings section
 	ipfsCard := widget.NewCard("IPFS Settings", "", nil)
-	pathLabel := widget.NewLabelWithStyle(
-		fmt.Sprintf("IPFS Path: %s", s.ipfsMgr.BinaryPath),
+
+	// Create a more informative path label
+	s.pathLabel = widget.NewLabelWithStyle(
+		"IPFS Status: Not installed",
 		fyne.TextAlignLeading,
 		fyne.TextStyle{},
 	)
+	s.updatePathLabel()
 
 	s.daemonButton.OnTapped = s.handleDaemonControl
 
 	// New Install IPFS button
-	installButton := widget.NewButton("Install IPFS", s.handleInstallIPFS)
+	s.installButton = widget.NewButton("Install IPFS", s.handleInstallIPFS)
+
+	// Create a container that will hold the daemon button
+	s.daemonContainer = container.NewVBox()
+	s.daemonContainer.Add(s.daemonButton)
+
+	// Create the clear button
+	clearPinsBtn := widget.NewButtonWithIcon("Clear All Pins", theme.ContentRemoveIcon(), func() {
+		if !s.ipfsMgr.IsDaemonRunning() {
+			dialog.ShowInformation("IPFS Status", "Daemon is not running", s.window)
+			return
+		}
+
+		// Show confirmation dialog
+		confirm := dialog.NewConfirm(
+			"Clear All Pins",
+			"Are you sure you want to unpin all content? This will remove all pinned data and cannot be undone.",
+			func(confirmed bool) {
+				if !confirmed {
+					return
+				}
+
+				// Get list of pins first
+				cmd := exec.Command(s.ipfsMgr.BinaryPath, "pin", "ls", "--type", "recursive")
+				cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", s.ipfsMgr.DataPath))
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					dialog.ShowError(fmt.Errorf("Error getting pins: %v", err), s.window)
+					return
+				}
+
+				pins := strings.Split(strings.TrimSpace(string(output)), "\n")
+				if len(pins) == 0 || (len(pins) == 1 && pins[0] == "") {
+					dialog.ShowInformation("Clear Pins", "No pins found to clear", s.window)
+					return
+				}
+
+				// Unpin each item
+				for _, line := range pins {
+					if line == "" {
+						continue
+					}
+					// Extract CID from the line
+					parts := strings.Fields(line)
+					if len(parts) == 0 {
+						continue
+					}
+					cid := parts[0]
+
+					err := s.ipfsMgr.UnpublishContent(cid)
+					if err != nil {
+						dialog.ShowError(fmt.Errorf("Error unpinning %s: %v", cid, err), s.window)
+						return
+					}
+				}
+
+				// Show success message
+				dialog.ShowInformation("Clear Pins", "Successfully unpinned all content and ran garbage collection", s.window)
+			},
+			s.window,
+		)
+		confirm.Show()
+	})
+	clearPinsBtn.Importance = widget.HighImportance
+
+	showPinnedBtn := widget.NewButton("Show Pinned Content", func() {
+		if !s.ipfsMgr.IsDaemonRunning() {
+			dialog.ShowInformation("IPFS Status", "Daemon is not running", s.window)
+			return
+		}
+
+		// Use ipfs command with proper environment
+		cmd := exec.Command(s.ipfsMgr.BinaryPath, "pin", "ls", "--type", "recursive")
+		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", s.ipfsMgr.DataPath))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("Error getting pins: %v (output: %s)", err, string(output)), s.window)
+			return
+		}
+
+		// Parse the output
+		pins := strings.Split(strings.TrimSpace(string(output)), "\n")
+		numPins := 0
+		if len(pins) > 0 && pins[0] != "" {
+			numPins = len(pins)
+		}
+
+		// Create scrollable content
+		var info strings.Builder
+		info.WriteString(fmt.Sprintf("Number of pinned items: %d\n\n", numPins))
+		for _, line := range pins {
+			if line != "" {
+				// Extract just the CID from the line (removes the "recursive" suffix)
+				parts := strings.Fields(line)
+				if len(parts) > 0 {
+					cid := parts[0]
+					info.WriteString(fmt.Sprintf("CID: %s\n", cid))
+				}
+			}
+		}
+
+		// Create a text widget with the content
+		text := widget.NewTextGridFromString(info.String())
+
+		// Put it in a scrollable container
+		scroll := container.NewScroll(text)
+		scroll.SetMinSize(fyne.NewSize(400, 300))
+
+		// Create and show a custom dialog
+		d := dialog.NewCustom("Pinned Content", "Close", scroll, s.window)
+		d.Resize(fyne.NewSize(500, 400))
+		d.Show()
+	})
 
 	ipfsCard.SetContent(container.NewVBox(
-		pathLabel,
+		s.pathLabel,
 		s.addressLabel,
 		widget.NewSeparator(),
 		s.statusLabel,
-		s.daemonButton,
-		installButton,
+		s.daemonContainer,
+		s.installButton,
+		showPinnedBtn,
+		clearPinsBtn,
 	))
 	s.content.Add(ipfsCard)
 
@@ -106,7 +229,7 @@ func (s *Settings) createUI() {
 	// Initial updates
 	s.updateIPFSStatus()
 	s.updateAddressLabel()
-	s.updateInstallButtonVisibility(installButton)
+	s.updateInstallButtonVisibility(s.daemonButton)
 }
 
 func (s *Settings) handleDaemonControl() {
@@ -137,6 +260,15 @@ func (s *Settings) updateIPFSStatus() {
 	s.daemonButton.Refresh()
 }
 
+func (s *Settings) updatePathLabel() {
+	if s.ipfsMgr.BinaryPath == "" {
+		s.pathLabel.SetText("IPFS Status: Not installed")
+	} else {
+		s.pathLabel.SetText(fmt.Sprintf("IPFS Path: %s", s.ipfsMgr.BinaryPath))
+	}
+	s.pathLabel.Refresh()
+}
+
 func (s *Settings) updateAddressLabel() {
 	if s.ipfsMgr.IsDaemonRunning() {
 		nodeID, addrs, err := s.ipfsMgr.GetNodeInfo()
@@ -157,25 +289,29 @@ func (s *Settings) updateAddressLabel() {
 	s.addressLabel.Refresh()
 }
 
-// New method to update the visibility of the Install IPFS button
-func (s *Settings) updateInstallButtonVisibility(installButton *widget.Button) {
-	installed, _ := s.ipfsMgr.IsIPFSDownloaded()
-	if installed {
-		installButton.Hide() // Hide the button if IPFS is installed
+func (s *Settings) updateInstallButtonVisibility(daemonButton *widget.Button) {
+	if s.ipfsMgr.BinaryPath != "" {
+		s.installButton.Hide()
+		s.daemonContainer.Show()
 	} else {
-		installButton.Show() // Show the button if IPFS is not installed
+		s.installButton.Show()
+		s.daemonContainer.Hide()
 	}
 }
 
-// New method to handle IPFS installation
 func (s *Settings) handleInstallIPFS() {
-	go func() {
-		if err := s.ipfsMgr.EnsureInstalled(); err != nil {
-			dialog.ShowError(err, s.window)
-			return
-		}
-		s.updateIPFSStatus() // Update status after installation
-		s.updateAddressLabel()
-		s.updateInstallButtonVisibility(s.daemonButton) // Update button visibility
-	}()
+	err := s.ipfsMgr.EnsureInstalled()
+	if err != nil {
+		dialog.ShowError(err, s.window)
+		return
+	}
+
+	s.updatePathLabel()
+	s.updateInstallButtonVisibility(s.daemonButton)
+	s.updateIPFSStatus()
+
+	if err := s.ipfsMgr.StartDaemon(); err != nil {
+		dialog.ShowError(err, s.window)
+		return
+	}
 }

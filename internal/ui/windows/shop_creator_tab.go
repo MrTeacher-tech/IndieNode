@@ -766,13 +766,12 @@ func parseURL(urlStr string) *url.URL {
 
 // handleDeleteShop handles the deletion of the current shop
 func (t *ShopCreatorTab) handleDeleteShop() {
-	if t.existingShop == nil || t.existingShop.Name == "" {
-		dialog.ShowError(fmt.Errorf("no shop selected to delete"), t.parent)
+	if t.existingShop == nil {
 		return
 	}
 
-	// Show confirmation dialog
-	dialog.ShowConfirm("Delete Shop",
+	dialog.ShowConfirm(
+		"Delete Shop",
 		fmt.Sprintf("Are you sure you want to delete the shop '%s'? This action cannot be undone.", t.existingShop.Name),
 		func(confirmed bool) {
 			if !confirmed {
@@ -783,6 +782,20 @@ func (t *ShopCreatorTab) handleDeleteShop() {
 			if err := t.shopMgr.DeleteShop(t.existingShop.Name); err != nil {
 				dialog.ShowError(fmt.Errorf("failed to delete shop: %w", err), t.parent)
 				return
+			}
+
+			// Reset the UI state
+			t.existingShop = nil
+			t.nameEntry.SetText("")
+			t.descriptionEntry.SetText("")
+			t.locationEntry.SetText("")
+			t.emailEntry.SetText("")
+			t.phoneEntry.SetText("")
+			t.logoPath = ""
+			t.currentImages = nil
+			if t.logoPreviewContainer != nil {
+				t.logoPreviewContainer.Objects = nil
+				t.logoPreviewContainer.Refresh()
 			}
 
 			// Call onSave with nil to indicate deletion

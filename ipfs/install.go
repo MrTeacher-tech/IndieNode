@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	shell "github.com/ipfs/go-ipfs-api"
 )
 
 func NewIPFSManager(config *Config) (*IPFSManager, error) {
@@ -50,28 +52,37 @@ func NewIPFSManager(config *Config) (*IPFSManager, error) {
 	}
 
 	basePath := filepath.Join(homeDir, "indie_node_ipfs")
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, err
+	wrapperPath := filepath.Join(basePath, "ipfs")
+	if runtime.GOOS == "windows" {
+		wrapperPath += ".bat"
+	}
+
+	// Only set BinaryPath if IPFS actually exists
+	binaryPath := ""
+	if _, err := os.Stat(wrapperPath); err == nil {
+		binaryPath = wrapperPath
 	}
 
 	manager := &IPFSManager{
-		BinaryPath: filepath.Join(basePath, "ipfs"),
-		DataPath:   filepath.Join(basePath, "ipfs-data"),
+		BinaryPath: binaryPath,                          // Empty if IPFS not found
+		DataPath:   filepath.Join(basePath, "ipfs-data"), // Use app-specific data path
 		Mode:       AppSpecificIPFS,
 		gateways:   make([]GatewayStatus, 0),
 	}
+
+	// Initialize the IPFS shell
+	manager.Shell = shell.NewShell("localhost:5001")
 
 	if runtime.GOOS == "windows" {
 		manager.BinaryPath += ".exe"
 	}
 
+	// Only allow custom binary path override, not custom data path
 	if config != nil {
 		if config.CustomBinaryPath != "" {
 			manager.BinaryPath = config.CustomBinaryPath
 		}
-		if config.CustomDataPath != "" {
-			manager.DataPath = config.CustomDataPath
-		}
+		// Remove custom data path override to ensure consistency
 		if len(config.CustomGateways) > 0 {
 			for _, gateway := range config.CustomGateways {
 				manager.AddCustomGateway(gateway)
@@ -140,18 +151,45 @@ func (m *IPFSManager) GetIPFSVersion() (string, error) {
 }
 
 func (m *IPFSManager) IsIPFSDownloaded() (bool, string) {
-	// Simply return current mode's status
-	if m.BinaryPath != "" {
+	// Check if binary actually exists at the path
+	if _, err := os.Stat(m.BinaryPath); err == nil {
 		version, err := m.GetIPFSVersion()
 		if err == nil {
 			return true, version
 		}
-		return true, "version unknown"
+		return false, ""
 	}
 	return false, ""
 }
 
 func (m *IPFSManager) downloadIPFS() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	// Setup paths
+	basePath := filepath.Join(homeDir, "indie_node_ipfs")
+	binaryPath := filepath.Join(basePath, "ipfs-bin") // Actual binary
+	wrapperPath := filepath.Join(basePath, "ipfs")    // Wrapper script
+	dataPath := filepath.Join(basePath, "ipfs-data")  // IPFS data directory
+	
+	if runtime.GOOS == "windows" {
+		binaryPath += ".exe"
+		wrapperPath += ".bat"
+	}
+
+	// Create the directories
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		return fmt.Errorf("failed to create IPFS directory: %v", err)
+	}
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		return fmt.Errorf("failed to create IPFS data directory: %v", err)
+	}
+
+	// Update manager's data path
+	m.DataPath = dataPath
+
 	var arch string
 	switch runtime.GOARCH {
 	case "amd64":
@@ -175,33 +213,120 @@ func (m *IPFSManager) downloadIPFS() error {
 	}
 
 	url := fmt.Sprintf("https://dist.ipfs.tech/kubo/%s/kubo_%s_%s-%s.tar.gz",
-		IPFSVersion, IPFSVersion[1:], osName, arch)
+		IPFSVersion, IPFSVersion, osName, arch)
+
+	fmt.Printf("Downloading IPFS from: %s\n", url)
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to download IPFS: %v", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download IPFS: HTTP %d", resp.StatusCode)
+	}
+
 	tmpFile, err := os.CreateTemp("", "ipfs-*.tar.gz")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create temporary file: %v", err)
 	}
 	defer os.Remove(tmpFile.Name())
 
+	fmt.Printf("Downloading to temporary file: %s\n", tmpFile.Name())
+
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		return err
+		return fmt.Errorf("failed to write download to temporary file: %v", err)
+	}
+	tmpFile.Close()
+
+	// Create a temporary directory for extraction
+	tempDir, err := os.MkdirTemp("", "ipfs_install")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir) // Clean up temp dir when done
+
+	fmt.Printf("Extracting to temporary directory: %s\n", tempDir)
+
+	// Use platform-specific extraction
+	var extractErr error
+	if runtime.GOOS == "windows" {
+		// For Windows, we'll need a different approach since tar might not be available
+		extractErr = extractTarGzWindows(tmpFile.Name(), tempDir)
+	} else {
+		cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-C", tempDir)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			extractErr = fmt.Errorf("tar extraction failed: %v\nOutput: %s", err, string(output))
+		}
 	}
 
-	cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-C", filepath.Dir(m.BinaryPath))
-	if err := cmd.Run(); err != nil {
-		return err
+	if extractErr != nil {
+		return extractErr
 	}
 
-	extractedPath := filepath.Join(filepath.Dir(m.BinaryPath), "kubo", "ipfs")
-	if err := os.Rename(extractedPath, m.BinaryPath); err != nil {
-		return err
+	// Find the extracted binary
+	extractedPath := filepath.Join(tempDir, "kubo", "ipfs")
+	if runtime.GOOS == "windows" {
+		extractedPath += ".exe"
 	}
 
-	return os.Chmod(m.BinaryPath, 0755)
+	// Create the target directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %v", err)
+	}
+
+	// Remove existing binaries if they exist
+	_ = os.Remove(binaryPath)
+	_ = os.Remove(wrapperPath)
+
+	// Copy the binary instead of moving (moving across devices can fail)
+	src, err := os.Open(extractedPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source binary: %v", err)
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(binaryPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create destination binary: %v", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy binary: %v", err)
+	}
+
+	// Create wrapper script
+	var wrapperContent string
+	if runtime.GOOS == "windows" {
+		wrapperContent = fmt.Sprintf(`@echo off
+set IPFS_PATH=%s
+"%s" %%*`, dataPath, binaryPath)
+	} else {
+		wrapperContent = fmt.Sprintf(`#!/bin/sh
+IPFS_PATH=%s exec "%s" "$@"`, dataPath, binaryPath)
+	}
+
+	if err := os.WriteFile(wrapperPath, []byte(wrapperContent), 0755); err != nil {
+		return fmt.Errorf("failed to create wrapper script: %v", err)
+	}
+
+	// Update binary path to point to wrapper
+	m.BinaryPath = wrapperPath
+
+	if err := os.Chmod(m.BinaryPath, 0755); err != nil {
+		return fmt.Errorf("failed to set executable permissions: %v", err)
+	}
+
+	fmt.Printf("IPFS installation completed successfully\n")
+	return nil
+}
+
+// extractTarGzWindows handles tar.gz extraction for Windows systems
+func extractTarGzWindows(tarGzPath, destPath string) error {
+	// This is a placeholder - you'll need to implement Windows-specific extraction
+	// You might want to use a Go-native tar/gzip implementation or a third-party library
+	return fmt.Errorf("Windows tar.gz extraction not yet implemented")
 }
