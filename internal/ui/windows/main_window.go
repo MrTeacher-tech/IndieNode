@@ -6,6 +6,7 @@ import (
 	"IndieNode/internal/services/shop"
 	"IndieNode/ipfs"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,33 +208,70 @@ func (w *MainWindow) createShopList() *container.TabItem {
 			viewBtn.OnTapped = func() {
 				shopDir := w.shopMgr.GetShopPath(info.name)
 
-				// Convert to absolute path
-				absPath, err := filepath.Abs(shopDir)
+				// Load the metadata to get the gateway URL
+				metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
+
+				// Read the metadata file
+				data, err := os.ReadFile(metadataPath)
 				if err != nil {
-					dialog.ShowError(fmt.Errorf("failed to get absolute path: %w", err), w.window)
+					dialog.ShowError(fmt.Errorf("failed to read metadata: %w", err), w.window)
 					return
 				}
 
-				htmlPath := filepath.Join(absPath, "src", "index.html")
+				var metadata struct {
+					CID     string `json:"cid"`
+					Gateway string `json:"gateway"`
+				}
 
-				// Debug logging
-				fmt.Printf("Attempting to open shop: %s\n", info.name)
-				fmt.Printf("Shop directory: %s\n", absPath)
-				fmt.Printf("HTML path: %s\n", htmlPath)
-
-				// Check if file exists
-				if _, err := os.Stat(htmlPath); os.IsNotExist(err) {
-					dialog.ShowError(fmt.Errorf("shop file not found at: %s", htmlPath), w.window)
+				if err := json.Unmarshal(data, &metadata); err != nil {
+					dialog.ShowError(fmt.Errorf("error parsing metadata: %w", err), w.window)
 					return
 				}
 
-				fileURL := "file://" + htmlPath
-				fmt.Printf("Opening URL: %s\n", fileURL)
+				// Use the gateway URL from metadata for the copy button
+				gatewayURL := metadata.Gateway
 
-				if err := w.authSvc.OpenBrowser(fileURL); err != nil {
-					dialog.ShowError(fmt.Errorf("failed to open shop in browser: %w", err), w.window)
+				// Create the copy button with the correct URL
+				urlContainer := container.NewHBox(
+					widget.NewLabel(gatewayURL),
+					widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+						w.window.Clipboard().SetContent(gatewayURL)
+						dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
+					}),
+				)
+
+				// Add the URL container to the content
+				content := container.NewVBox(
+					widget.NewLabel("Shop published successfully!"),
+					widget.NewLabel("Scan QR code or use one of the URLs below:"),
+					urlContainer,
+					widget.NewLabel("Available Gateways:"),
+				)
+
+				// Generate QR code with the gateway URL from metadata
+				qr, err := qrcode.New(gatewayURL, qrcode.Medium)
+				if err != nil {
+					dialog.ShowError(fmt.Errorf("failed to generate QR code: %w", err), w.window)
 					return
 				}
+
+				// Convert QR code to PNG bytes
+				pngBytes, err := qr.PNG(256)
+				if err != nil {
+					dialog.ShowError(fmt.Errorf("failed to generate QR code image: %w", err), w.window)
+					return
+				}
+
+				// Create image from bytes
+				img := canvas.NewImageFromReader(bytes.NewReader(pngBytes), "QR Code")
+				img.FillMode = canvas.ImageFillOriginal
+				img.SetMinSize(fyne.NewSize(256, 256))
+
+				content.Add(img)
+
+				// Show custom dialog
+				d := dialog.NewCustom("Success", "Close", content, w.window)
+				d.Show()
 			}
 
 			// Configure edit button
@@ -420,13 +458,13 @@ func (w *MainWindow) refreshShopList() {
 				if isPublished && cid != "" {
 					fmt.Printf("[DEBUG] Shop is published with CID: %s\n", cid)
 					fmt.Printf("[DEBUG] Gateway URL: %s\n", gateway)
-					
+
 					// The gateway URL might already contain /src/index.html, so check and remove if needed
 					url := gateway
 					if !strings.HasSuffix(url, "/src/index.html") {
 						url += "/src/index.html"
 					}
-					
+
 					fmt.Printf("[DEBUG] Final URL: %s\n", url)
 					fmt.Printf("Shop %s is already published at: %s\n", info.name, url)
 					w.showPublishSuccessDialog(url, cid)
@@ -471,33 +509,68 @@ func (w *MainWindow) refreshShopList() {
 		viewBtn.OnTapped = func() {
 			shopDir := w.shopMgr.GetShopPath(info.name)
 
-			// Convert to absolute path
-			absPath, err := filepath.Abs(shopDir)
+			// Load the metadata to get the gateway URL
+			metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
+
+			// Read the metadata file
+			data, err := os.ReadFile(metadataPath)
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to get absolute path: %w", err), w.window)
+				dialog.ShowError(fmt.Errorf("failed to read metadata: %w", err), w.window)
 				return
 			}
 
-			htmlPath := filepath.Join(absPath, "src", "index.html")
+			var metadata struct {
+				CID     string `json:"cid"`
+				Gateway string `json:"gateway"`
+			}
 
-			// Debug logging
-			fmt.Printf("Attempting to open shop: %s\n", info.name)
-			fmt.Printf("Shop directory: %s\n", absPath)
-			fmt.Printf("HTML path: %s\n", htmlPath)
-
-			// Check if file exists
-			if _, err := os.Stat(htmlPath); os.IsNotExist(err) {
-				dialog.ShowError(fmt.Errorf("shop file not found at: %s", htmlPath), w.window)
+			if err := json.Unmarshal(data, &metadata); err != nil {
+				dialog.ShowError(fmt.Errorf("error parsing metadata: %w", err), w.window)
 				return
 			}
 
-			fileURL := "file://" + htmlPath
-			fmt.Printf("Opening URL: %s\n", fileURL)
+			// Use the gateway URL from metadata for the copy button
+			gatewayURL := metadata.Gateway
+			urlContainer := container.NewHBox(
+				widget.NewLabel(gatewayURL),
+				widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+					w.window.Clipboard().SetContent(gatewayURL)
+					dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
+				}),
+			)
 
-			if err := w.authSvc.OpenBrowser(fileURL); err != nil {
-				dialog.ShowError(fmt.Errorf("failed to open shop in browser: %w", err), w.window)
+			// Add the URL container to the content
+			content := container.NewVBox(
+				widget.NewLabel("Shop published successfully!"),
+				widget.NewLabel("Scan QR code or use one of the URLs below:"),
+				urlContainer,
+				widget.NewLabel("Available Gateways:"),
+			)
+
+			// Generate QR code with the gateway URL from metadata
+			qr, err := qrcode.New(gatewayURL, qrcode.Medium)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to generate QR code: %w", err), w.window)
 				return
 			}
+
+			// Convert QR code to PNG bytes
+			pngBytes, err := qr.PNG(256)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to generate QR code image: %w", err), w.window)
+				return
+			}
+
+			// Create image from bytes
+			img := canvas.NewImageFromReader(bytes.NewReader(pngBytes), "QR Code")
+			img.FillMode = canvas.ImageFillOriginal
+			img.SetMinSize(fyne.NewSize(256, 256))
+
+			content.Add(img)
+
+			// Show custom dialog
+			d := dialog.NewCustom("Success", "Close", content, w.window)
+			d.Show()
 		}
 
 		// Configure edit button
@@ -569,14 +642,33 @@ func (w *MainWindow) refreshShopList() {
 }
 
 func (w *MainWindow) showPublishSuccessDialog(url string, cid string) {
-	// Reinitialize gateways to ensure we have the latest list
-	w.ipfsMgr.ReinitializeGateways()
+	// Load the metadata to get the gateway URL
+	shopDir := w.shopMgr.GetShopPath(w.shopCreator.existingShop.Name)
+	metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
 
-	// Sanitize the URL first
-	sanitizedURL := sanitizeIPFSURL(url)
+	// Read the metadata file
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("failed to read metadata: %w", err), w.window)
+		return
+	}
 
-	// Generate QR code with sanitized URL
-	qr, err := qrcode.New(sanitizedURL, qrcode.Medium)
+	var metadata struct {
+		CID     string `json:"cid"`
+		Gateway string `json:"gateway"`
+	}
+
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		dialog.ShowError(fmt.Errorf("error parsing metadata: %w", err), w.window)
+		return
+	}
+
+	// Use the gateway URL from metadata
+	gatewayURL := metadata.Gateway
+	fmt.Printf("Using Gateway URL: %s\n", gatewayURL)
+
+	// Generate QR code with the gateway URL from metadata
+	qr, err := qrcode.New(gatewayURL, qrcode.Medium)
 	if err != nil {
 		dialog.ShowError(fmt.Errorf("failed to generate QR code: %w", err), w.window)
 		return
@@ -594,36 +686,21 @@ func (w *MainWindow) showPublishSuccessDialog(url string, cid string) {
 	img.FillMode = canvas.ImageFillOriginal
 	img.SetMinSize(fyne.NewSize(256, 256))
 
-	// Create container with gateway URLs and copy buttons
-	content := container.NewVBox(
-		widget.NewLabel("Shop published successfully!"),
-		widget.NewLabel("Scan QR code or use one of the URLs below:"),
-		img,
-		widget.NewLabel("Available Gateways:"),
+	// Create container with the gateway URL and copy button
+	urlContainer := container.NewHBox(
+		widget.NewLabel(gatewayURL),
+		widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+			w.window.Clipboard().SetContent(gatewayURL)
+			dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
+		}),
 	)
 
-	// Add each gateway URL with its own copy button
-	for _, gateway := range w.ipfsMgr.GetGateways() {
-		if !gateway.Healthy {
-			continue
-		}
-
-		gatewayURL := gateway.URL + "/ipfs/" + cid + "/src/index.html"
-		urlContainer := container.NewHBox(
-			widget.NewLabel(gateway.URL),
-			widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
-				w.window.Clipboard().SetContent(gatewayURL)
-				dialog.ShowInformation("Success", "URL copied to clipboard!", w.window)
-			}),
-		)
-
-		// Add "Recommended" label for Protocol Labs main gateway
-		if gateway.URL == "https://ipfs.io" {
-			urlContainer.Add(widget.NewLabelWithStyle(" (Recommended)", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}))
-		}
-
-		content.Add(urlContainer)
-	}
+	content := container.NewVBox(
+		widget.NewLabel("Shop published successfully!"),
+		widget.NewLabel("Scan QR code or use the URL below:"),
+		img,
+		urlContainer,
+	)
 
 	// Show custom dialog
 	d := dialog.NewCustom("Success", "Close", content, w.window)

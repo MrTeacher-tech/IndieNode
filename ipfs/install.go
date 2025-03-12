@@ -64,7 +64,7 @@ func NewIPFSManager(config *Config) (*IPFSManager, error) {
 	}
 
 	manager := &IPFSManager{
-		BinaryPath: binaryPath,                          // Empty if IPFS not found
+		BinaryPath: binaryPath,                           // Empty if IPFS not found
 		DataPath:   filepath.Join(basePath, "ipfs-data"), // Use app-specific data path
 		Mode:       AppSpecificIPFS,
 		gateways:   make([]GatewayStatus, 0),
@@ -173,7 +173,7 @@ func (m *IPFSManager) downloadIPFS() error {
 	binaryPath := filepath.Join(basePath, "ipfs-bin") // Actual binary
 	wrapperPath := filepath.Join(basePath, "ipfs")    // Wrapper script
 	dataPath := filepath.Join(basePath, "ipfs-data")  // IPFS data directory
-	
+
 	if runtime.GOOS == "windows" {
 		binaryPath += ".exe"
 		wrapperPath += ".bat"

@@ -40,15 +40,29 @@ func (m *IPFSManager) AddDirectory(path string) (string, error) {
 		return "", fmt.Errorf("IPFS binary not found")
 	}
 
-	// Add directory to IPFS using command
-	cmd := exec.Command(m.BinaryPath, "add", "-r", "-Q", path)
+	// Add directory to IPFS using command, removed -Q flag to get full output
+	cmd := exec.Command(m.BinaryPath, "add", "-r", "--wrap-with-directory", path)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to add directory %s to IPFS: %w", path, err)
 	}
-	hash := strings.TrimSpace(string(output))
+
+	// Parse output to get the root directory hash (last line)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 {
+		return "", fmt.Errorf("no output from ipfs add command")
+	}
+
+	// Get the last line which contains the root directory hash
+	lastLine := lines[len(lines)-1]
+	parts := strings.Fields(lastLine)
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected ipfs add output format")
+	}
+	hash := parts[1] // The hash is the second field
 	fmt.Printf("Successfully added directory to IPFS with hash: %s\n", hash)
+	fmt.Printf("Full directory structure:\n%s\n", string(output))
 
 	// Pin the content
 	cmd = exec.Command(m.BinaryPath, "pin", "add", hash)
@@ -134,7 +148,7 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 	}
 	fmt.Printf("Added directory to IPFS with hash: %s\n", hash)
 
-	// Get the gateway URL
+	// Get the gateway URL (no need to append shop name, it's included in the IPFS structure)
 	baseURL := m.GetGatewayURL(hash)
 	fmt.Printf("Base gateway URL: %s\n", baseURL)
 
@@ -145,13 +159,20 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 		fmt.Printf("Directory contents:\n%s\n", string(output))
 	}
 
+	// Get the shop directory name from the path
+	shopDirName := filepath.Base(shopDir)
+
+	// Construct the gateway URL with the shop directory name
+	finalURL := baseURL + "/" + shopDirName + "/src/index.html"
+	fmt.Printf("Final URL: %s\n", finalURL)
+
 	// Create metadata file
 	metadata := struct {
 		CID     string `json:"cid"`
 		Gateway string `json:"gateway"`
 	}{
 		CID:     hash,
-		Gateway: baseURL + "/src/index.html",
+		Gateway: finalURL, // Save the constructed gateway URL
 	}
 
 	// Save metadata to file
@@ -173,8 +194,6 @@ func (m *IPFSManager) Publish(htmlPath string, shopPath string) (string, error) 
 	}
 	fmt.Printf("Updated shop.json with new CID\n")
 
-	finalURL := baseURL + "/src/index.html"
-	fmt.Printf("Final URL: %s\n", finalURL)
 	return finalURL, nil
 }
 

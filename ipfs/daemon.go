@@ -37,7 +37,12 @@ func (m *IPFSManager) Initialize() error {
 			desc string
 		}{
 			{[]string{"config", "Addresses.API", "/ip4/127.0.0.1/tcp/5001"}, "API address"},
-			{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws"]`}, "Swarm addresses"},
+			{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws","/ip4/0.0.0.0/udp/4001/quic-v1","/ip4/0.0.0.0/udp/4001/quic-v1/webtransport"]`}, "Swarm addresses"},
+			{[]string{"config", "--json", "Routing", `{"Type":"dht","Methods":{"find-peers":{"Strategy":"dht"},"find-providers":{"Strategy":"dht"},"get-ipns":{"Strategy":"dht"},"provide":{"Strategy":"dht"},"put-ipns":{"Strategy":"dht"}}}`}, "DHT routing"},
+			{[]string{"config", "--json", "Swarm.EnableHolePunching", "true"}, "Enable hole punching"},
+			{[]string{"config", "--json", "Swarm.EnableRelayClient", "true"}, "Enable relay client"},
+			{[]string{"config", "--json", "Swarm.RelayClient.EnableCircuitV1", "true"}, "Enable circuit relay v1"},
+			{[]string{"config", "--json", "Swarm.RelayService.Enabled", "true"}, "Enable relay service"},
 		}
 
 		for _, cmd := range configCommands {
@@ -81,8 +86,13 @@ func (m *IPFSManager) StartDaemon() error {
 		desc string
 	}{
 		{[]string{"config", "Addresses.API", "/ip4/127.0.0.1/tcp/5001"}, "API address"},
-		{[]string{"config", "Addresses.Gateway", "/ip4/127.0.0.1/tcp/8080"}, "Gateway address"},
-		{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws"]`}, "Swarm addresses"},
+		{[]string{"config", "Addresses.Gateway", "/ip4/0.0.0.0/tcp/8080"}, "Gateway address"},
+		{[]string{"config", "Addresses.Swarm", "--json", `["/ip4/0.0.0.0/tcp/4001","/ip4/0.0.0.0/tcp/8081/ws","/ip4/0.0.0.0/udp/4001/quic-v1","/ip4/0.0.0.0/udp/4001/quic-v1/webtransport"]`}, "Swarm addresses"},
+		{[]string{"config", "--json", "Gateway", `{"HTTPHeaders":{"Access-Control-Allow-Origin":["*"],"Access-Control-Allow-Methods":["GET"],"Access-Control-Allow-Headers":["X-Requested-With","Range","User-Agent"]}}`}, "Gateway CORS"},
+		{[]string{"config", "--json", "Swarm.EnableHolePunching", "true"}, "Enable hole punching"},
+		{[]string{"config", "--json", "Swarm.EnableRelayClient", "true"}, "Enable relay client"},
+		{[]string{"config", "--json", "Swarm.RelayClient.EnableCircuitV1", "true"}, "Enable circuit relay v1"},
+		{[]string{"config", "--json", "Swarm.RelayService.Enabled", "true"}, "Enable relay service"},
 	}
 
 	for _, cmd := range configCommands {
@@ -174,9 +184,6 @@ func (m *IPFSManager) StopDaemon() error {
 		}
 	}
 
-	// Clear gateways
-	m.ClearGateways()
-
 	m.Daemon = nil
 	m.Status = DaemonStopped
 	return nil
@@ -230,24 +237,4 @@ func (m *IPFSManager) ConfigureGateway() error {
 	}
 	fmt.Printf("Successfully configured gateway address\n")
 	return nil
-}
-
-func (m *IPFSManager) ClearGateways() {
-	// Clear gateways
-	configCommands := []struct {
-		args []string
-		desc string
-	}{
-		{[]string{"config", "Addresses.Gateway", ""}, "Gateway address"},
-	}
-
-	for _, cmd := range configCommands {
-		command := exec.Command(m.BinaryPath, cmd.args...)
-		command.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
-		if output, err := command.CombinedOutput(); err != nil {
-			fmt.Printf("Failed to clear IPFS %s: %v (output: %s)\n", cmd.desc, err, string(output))
-		} else {
-			fmt.Printf("Successfully cleared %s\n", cmd.desc)
-		}
-	}
 }
