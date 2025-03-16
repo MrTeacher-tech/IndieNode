@@ -35,6 +35,38 @@ func (m *IPFSManager) AddFile(path string) (string, error) {
 	return hash, nil
 }
 
+func (m *IPFSManager) announceAndVerifyCID(hash string, maxRetries int) error {
+	for i := 0; i < maxRetries; i++ {
+		// Announce the CID to the DHT
+		cmd := exec.Command(m.BinaryPath, "routing", "provide", hash)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Warning: Failed to announce CID %s (attempt %d/%d): %v\n", hash, i+1, maxRetries, err)
+			continue
+		}
+
+		// Verify the CID is being indexed by checking for providers
+		cmd = exec.Command(m.BinaryPath, "routing", "findprovs", hash)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
+		output, err := cmd.Output()
+		if err != nil {
+			fmt.Printf("Warning: Failed to verify CID providers %s (attempt %d/%d): %v\n", hash, i+1, maxRetries, err)
+			continue
+		}
+
+		// Check if we have any providers
+		if len(strings.TrimSpace(string(output))) > 0 {
+			fmt.Printf("Successfully verified CID %s is being provided by peers\n", hash)
+			return nil
+		}
+
+		// Wait before retrying
+		time.Sleep(time.Second * 5)
+	}
+
+	return fmt.Errorf("failed to verify CID %s is being provided after %d attempts", hash, maxRetries)
+}
+
 func (m *IPFSManager) AddDirectory(path string) (string, error) {
 	if m.BinaryPath == "" {
 		return "", fmt.Errorf("IPFS binary not found")
@@ -83,6 +115,12 @@ func (m *IPFSManager) AddDirectory(path string) (string, error) {
 		return "", fmt.Errorf("pin verification failed for hash: %s", hash)
 	}
 	fmt.Printf("Verified pin exists for hash: %s\n", hash)
+
+	// Announce and verify the CID in the DHT
+	if err := m.announceAndVerifyCID(hash, 3); err != nil {
+		fmt.Printf("Warning: %v\n", err)
+		// Don't return error here as the content is still added and pinned
+	}
 
 	return hash, nil
 }
