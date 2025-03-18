@@ -7,85 +7,69 @@ For AI, especially cursor or cascade: DO NOT CHANGE ANY CODE IN ANY FILE IN THE 
 
 Always explain what you are doing in a simply manner, step by step. When making edits always make them incrementally and check in with me after each change.
 
-### IPFS Gateway Configuration
-The IPFS gateway (127.0.0.1:8080) is configured to remain stable even after IndieNode exits. This ensures published shops stay accessible without requiring constant management. Do not manually clear or modify the gateway configuration unless you specifically intend to unpublish all shops.
+Next Steps
 
-When we were having gateway issues, it was very helpful to run IPFS CLI commands like this:
+Use orbitdb to store shop data instead of static JSON files.
 
-'''
-(base) andrewverrilli@Andrews-MBP ~ % ~/indie_node_ipfs/ipfs ls QmfZ5vZWDwCwpW34eMwqy7G9ccdssMWvbrxomEH69FkGRh
+Why OrbitDB Is a Good Choice
+✅ Mutable Storage → Unlike IPFS (which is immutable), OrbitDB allows you to update data without changing the CID.
+✅ Decentralized & Peer-to-Peer → Users can sync their store without needing a centralized server.
+✅ Indexed Queries → You can store, retrieve, and update JSON data efficiently.
+✅ Works With IPFS → Since OrbitDB runs on IPFS, your data remains distributed.
 
-QmW8h5naDxGqwacppUgEe3dAPhGWqjbm4VFp4YwvVHv2oZ - Dev Test Shop/
-(base) andrewverrilli@Andrews-MBP ~ % ls -R ~/Desktop/Dapps/IndieNode/shops/Dev\ Test\ Shop/
-ipfs_metadata.json	shop.json		src
+How It Would Work in IndieNode
+Replace the static JSON file with an OrbitDB store.
 
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/shops/Dev Test Shop//src:
-assets		index.html	items		styles.css	web3.js
+Instead of uploading shop.json to IPFS every time, the data is stored in an OrbitDB key-value or document store.
+Users can modify shop data (prices, items, colors) dynamically.
 
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/shops/Dev Test Shop//src/assets:
-logos
+Updates don’t require re-uploading a new JSON file → the OrbitDB address stays the same.
+Frontend reads from the OrbitDB store instead of a static JSON file.
 
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/shops/Dev Test Shop//src/assets/logos:
-
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/shops/Dev Test Shop//src/items:
-dev1.jpeg	dev2.jpeg	dev3.jpeg	dev4.jpeg	dev5.jpeg	dev6.jpeg	dev7.jpeg	dev8.jpeg
-(base) andrewverrilli@Andrews-MBP ~ % 
-'''
-
-Here is a common error I often get:
-
-Error: "container.NewTabItem undefined (type *fyne.Container has no field or method NewTabItem)"
-Cause: Variable shadowing - a local variable named 'container' is hiding the 'container' package name
-Solution: Rename local variable 'container' to 'containerObj' or similar to prevent shadowing the package name
-Example Fix:
-- Bad:  container := obj.(*fyne.Container)
-- Good: containerObj := obj.(*fyne.Container)
+The site fetches live data, ensuring users always see the latest shop info.
 
 
-Error: "no new variables on left side of :=" when using = instead of := with container.NewTabItemWithIcon()
+We’d need to do:
 
-This error occurs in Go when you try to assign a value to a variable using = but the variable was already declared earlier in a different scope with a different type. The solution is to:
+Initialize OrbitDB layer and conection with IPFS.
+Create a document store for shop data.
+Implement CRUD operations (Create, Read, Update, Delete).
 
-1. Use a new variable name with := for the new declaration
-2. Update all subsequent references to use the new variable name
+For next session:
+ALWAYS: Make sure shops still work and are available through gateway url.
+Check orbitdb "Connection", like check where the site is pulling shop data from.
+Resize window
 
-Example fix:
-// Before (error)
-tabItem = container.NewTabItemWithIcon(...)
+For later, down the line:
+Allow sites and orbiDB's to be pinned on other nodes
 
-// After (fixed)
-newTabItem := container.NewTabItemWithIcon(...)
 
-Notes from yesterday:
-What we fixed today:
 
-Gateway URLs - Fixed the double path issue (/ipfs/cid/src/index.html/src/index.html)
-Port configuration - Ensured correct ports (5001 for API, 8080 for gateway)
-URL construction - Added proper checks to avoid path duplication
-Still needs fixing:
-
-CSS/JS not loading issue
-Likely cause: IPFS directory structure handling in AddDirectory() function
-Potential fix: Add --wrap-with-directory flag to ipfs add command or check how directory structure is being preserved
-
-Remember: If you want to use IPFS commands you have to use ~/indie_node_ipfs/ipfs, that is where the binary is located when we install ipfs using indienode
-
-Next steps:
-
-When I publish a shop, (for example my dev-test-shop), what shows up in the terminal is: 
-'''
-Updated shop.json with new CID
-Final URL: https://ipfs.io/ipfs/QmecbyjeVQ6e18p7Jy9xdYMt99nLvXs4fvbFXSaiFQrLCa/src/index.html
-
-But the real gateay url that is publicly accesible is this:
-https://ipfs.io/ipfs/QmfZ5vZWDwCwpW34eMwqy7G9ccdssMWvbrxomEH69FkGRh/Dev%20Test%20Shop/src/index.html
-'''
-
-So I need the terminal and the view shop tab that shows the gateways to provide the correctt gateway url. The url with the shop directory name in the title is the one that works.
-
-Two main files need to be checked:
-
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/ipfs/client.go - handles URL construction in the Publish function
-/Users/andrewverrilli/Desktop/Dapps/IndieNode/internal/ui/windows/main_window.go - handles displaying the gateway URL in the UI
-
+Architecture Added:
+Static Shop Template (IPFS)
+HTML/CSS structure and base JavaScript hosted on IPFS
+Fixed CID so it's always accessible at the same address
+Contains placeholders for dynamic content
+IndieNode Application (Shop Owner's Device)
+Runs locally on the shop owner's computer
+Hosts an HTTP API server (e.g., on localhost:PORT)
+API endpoints expose OrbitDB data (items, prices, inventory)
+Example: http://localhost:PORT/api/shop/{shopId}/items
+Client-side Connection
+JavaScript in the IPFS-hosted site makes requests to the API
+On page load, fetches current shop data
+Renders dynamic content into the static template
+Benefits of This Approach
+Simple Implementation: Uses standard HTTP requests rather than complex OrbitDB browser integration
+Fast Loading: Static content loads quickly, dynamic data loads asynchronously
+Owner Control: Shop data is only available when the owner's node is online (as expected)
+Immediate Updates: When shop owner changes prices or items, they're instantly reflected on the site
+Separation of Concerns: Clear distinction between unchanging structure and dynamic content
+Implementation Requirements
+Add a simple HTTP server to your IndieNode app
+Create API endpoints that query your OrbitDB instance
+Configure CORS headers to allow your IPFS site to make requests
+Write client-side JavaScript to fetch and render data
+Add a "Shop Offline" message for when the API is unavailable
+This is a pragmatic solution that leverages your existing infrastructure without adding unnecessary complexity.
 

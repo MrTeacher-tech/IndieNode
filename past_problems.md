@@ -24,3 +24,28 @@ Automatic CID announcement (routing provide) after adding the site.
 A check (routing findprovs) before returning the gateway URL to confirm the CID is reachable.
 A retry mechanism if the CID isn't found, ensuring it gets properly distributed.
 This will make sure every published site is immediately accessible on public IPFS gateways without manual intervention.
+
+
+Here is a common error I often get:
+
+Error: "container.NewTabItem undefined (type *fyne.Container has no field or method NewTabItem)"
+Cause: Variable shadowing - a local variable named 'container' is hiding the 'container' package name
+Solution: Rename local variable 'container' to 'containerObj' or similar to prevent shadowing the package name
+Example Fix:
+- Bad:  container := obj.(*fyne.Container)
+- Good: containerObj := obj.(*fyne.Container)
+
+
+Error: "no new variables on left side of :=" when using = instead of := with container.NewTabItemWithIcon()
+
+This error occurs in Go when you try to assign a value to a variable using = but the variable was already declared earlier in a different scope with a different type. The solution is to:
+
+1. Use a new variable name with := for the new declaration
+2. Update all subsequent references to use the new variable name
+
+Example fix:
+// Before (error)
+tabItem = container.NewTabItemWithIcon(...)
+
+// After (fixed)
+newTabItem := container.NewTabItemWithIcon(...)

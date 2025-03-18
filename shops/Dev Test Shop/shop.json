@@ -1,130 +1,130 @@
 {
-    "CID": "QmfZ5vZWDwCwpW34eMwqy7G9ccdssMWvbrxomEH69FkGRh",
-    "Description": "A sample shop for development and testing",
-    "Email": "dev@example.com",
     "ID": "",
+    "OwnerAddress": "0x37eA7944328DF1A4D7ffA6658A002d5C332cTEST",
+    "Name": "Dev Test Shop",
+    "URLName": "dev-test-shop",
+    "Description": "A sample shop for development and testing",
+    "Location": "Silicon Valley, CA",
+    "Email": "dev@example.com",
+    "Phone": "978-555-0123",
+    "PrimaryColor": {
+        "R": 255,
+        "G": 252,
+        "B": 233,
+        "A": 250
+    },
+    "SecondaryColor": {
+        "R": 29,
+        "G": 29,
+        "B": 29,
+        "A": 150
+    },
+    "TertiaryColor": {
+        "R": 90,
+        "G": 217,
+        "B": 213,
+        "A": 90
+    },
+    "LogoPath": "",
+    "LocalLogoPath": "",
     "Items": [
         {
-            "Description": "This is a high-quality item for testing",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev1.jpeg"
-            ],
             "Name": "Premium Item 1",
+            "Price": 29.99,
+            "Description": "This is a high-quality item for testing",
             "PhotoPaths": [
                 "items/dev1.jpeg"
             ],
-            "Price": 29.99
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev1.jpeg"
+            ]
         },
         {
-            "Description": "Another excellent product in our catalog",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev2.jpeg"
-            ],
             "Name": "Premium Item 2",
+            "Price": 39.99,
+            "Description": "Another excellent product in our catalog",
             "PhotoPaths": [
                 "items/dev2.jpeg"
             ],
-            "Price": 39.99
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev2.jpeg"
+            ]
         },
         {
-            "Description": "Top-tier product with amazing features",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev3.jpeg"
-            ],
             "Name": "Premium Item 3",
+            "Price": 69,
+            "Description": "Top-tier product with amazing features",
             "PhotoPaths": [
                 "items/dev3.jpeg"
             ],
-            "Price": 69
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev3.jpeg"
+            ]
         },
         {
-            "Description": "This is a great item for testing",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev4.jpeg"
-            ],
             "Name": "Premium Item 4",
+            "Price": 12.99,
+            "Description": "This is a great item for testing",
             "PhotoPaths": [
                 "items/dev4.jpeg"
             ],
-            "Price": 12.99
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev4.jpeg"
+            ]
         },
         {
-            "Description": "Another product we offer for test purposes",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev5.jpeg"
-            ],
             "Name": "Premium Item 5",
+            "Price": 34.49,
+            "Description": "Another product we offer for test purposes",
             "PhotoPaths": [
                 "items/dev5.jpeg"
             ],
-            "Price": 34.49
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev5.jpeg"
+            ]
         },
         {
-            "Description": "Amazing product with cool features",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev6.jpeg"
-            ],
             "Name": "Premium Item 6",
+            "Price": 99.99,
+            "Description": "Amazing product with cool features",
             "PhotoPaths": [
                 "items/dev6.jpeg"
             ],
-            "Price": 99.99
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev6.jpeg"
+            ]
         },
         {
-            "Description": "This is for sale and for testing",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev7.jpeg"
-            ],
             "Name": "Premium Item 7",
+            "Price": 34.49,
+            "Description": "This is for sale and for testing",
             "PhotoPaths": [
                 "items/dev7.jpeg"
             ],
-            "Price": 34.49
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev7.jpeg"
+            ]
         },
         {
-            "Description": "You should buy this test item",
             "ID": "",
-            "LocalPhotoPaths": [
-                "internal/dev/dev_images/dev8.jpeg"
-            ],
             "Name": "Premium Item 8",
+            "Price": 99.99,
+            "Description": "You should buy this test item",
             "PhotoPaths": [
                 "items/dev8.jpeg"
             ],
-            "Price": 99.99
+            "LocalPhotoPaths": [
+                "internal/dev/dev_images/dev8.jpeg"
+            ]
         }
     ],
-    "LocalLogoPath": "",
-    "Location": "Silicon Valley, CA",
-    "LogoPath": "",
-    "Name": "Dev Test Shop",
-    "OwnerAddress": "0x37eA7944328DF1A4D7ffA6658A002d5C332cTEST",
-    "Phone": "978-555-0123",
-    "PrimaryColor": {
-        "A": 250,
-        "B": 233,
-        "G": 252,
-        "R": 255
-    },
-    "Published": false,
-    "SecondaryColor": {
-        "A": 150,
-        "B": 29,
-        "G": 29,
-        "R": 29
-    },
-    "TertiaryColor": {
-        "A": 90,
-        "B": 213,
-        "G": 217,
-        "R": 90
-    },
-    "URLName": "dev-test-shop"
+    "CID": "QmP3L8uM6VdYhxaZfMLPYyY7LjhNZQZW3KAnRtxQMudjku",
+    "Published": true
 }

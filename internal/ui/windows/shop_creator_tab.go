@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -683,29 +684,59 @@ func (t *ShopCreatorTab) generateAndPublish() error {
 	// Show progress dialog
 	progress := dialog.NewProgress("Publishing", "Publishing shop to IPFS...", t.parent)
 	progress.Show()
-	defer progress.Hide()
 
 	// Get shop path
 	shopPath := t.shopMgr.GetShopPath(t.existingShop.Name)
 	htmlPath := filepath.Join(shopPath, "src", "index.html")
 	shopJsonPath := filepath.Join(shopPath, "shop.json")
 
-	// Publish to IPFS
-	url, err := t.ipfsMgr.Publish(htmlPath, shopJsonPath)
-	if err != nil {
-		return fmt.Errorf("failed to publish to IPFS: %w", err)
-	}
+	// Store shop reference for use in goroutine
+	shopName := t.existingShop.Name
 
-	// Sanitize the URL before showing it
-	sanitizedURL := sanitizeIPFSURL(url)
+	// Run IPFS publishing in a goroutine to avoid blocking the UI
+	go func() {
+		// Publish to IPFS
+		url, err := t.ipfsMgr.Publish(htmlPath, shopJsonPath)
 
-	// Set the isPublished flag to true only after successful publish
-	t.existingShop.Published = true
+		// Capture the result
+		finalURL := ""
+		if err == nil {
+			finalURL = sanitizeIPFSURL(url)
+		}
 
-	// Call the publish success callback if it exists
-	if t.onPublishSuccess != nil {
-		t.onPublishSuccess(sanitizedURL)
-	}
+		// Use time.AfterFunc to get back to the main thread safely
+		time.AfterFunc(100*time.Millisecond, func() {
+			// Hide the progress dialog first
+			progress.Hide()
+
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to publish to IPFS: %w", err), t.parent)
+				return
+			}
+
+			// Reload the shop to ensure we have the latest data
+			shop, err := t.shopMgr.LoadShop(shopName)
+			if err == nil && shop != nil {
+				// Set the published flag to true only after successful publish
+				shop.Published = true
+				// Save the updated shop
+				t.shopMgr.SaveShop(shop)
+
+				// Update the existing shop if it's still the same one
+				if t.existingShop != nil && t.existingShop.Name == shopName {
+					t.existingShop.Published = true
+				}
+			}
+
+			// Call the publish success callback if it exists
+			if t.onPublishSuccess != nil {
+				t.onPublishSuccess(finalURL)
+			} else {
+				// If there's no callback, show a simple success dialog
+				dialog.ShowInformation("Published Successfully", "Your shop has been published to IPFS!\n\nURL: "+finalURL, t.parent)
+			}
+		})
+	}()
 
 	return nil
 }

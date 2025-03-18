@@ -3,12 +3,13 @@ package ipfs
 import (
 	"encoding/json"
 	"fmt"
-
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	shell "github.com/ipfs/go-ipfs-api"
 )
 
 func (m *IPFSManager) AddFile(path string) (string, error) {
@@ -36,31 +37,53 @@ func (m *IPFSManager) AddFile(path string) (string, error) {
 }
 
 func (m *IPFSManager) announceAndVerifyCID(hash string, maxRetries int) error {
+	fmt.Printf("[DHT] Starting DHT announcement process for CID: %s\n", hash)
+	fmt.Printf("[DHT] Maximum retries: %d\n", maxRetries)
+
 	for i := 0; i < maxRetries; i++ {
+		fmt.Printf("[DHT] Attempt %d/%d: Announcing CID to DHT...\n", i+1, maxRetries)
+
 		// Announce the CID to the DHT
 		cmd := exec.Command(m.BinaryPath, "routing", "provide", hash)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Warning: Failed to announce CID %s (attempt %d/%d): %v\n", hash, i+1, maxRetries, err)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("[DHT] Warning: Failed to announce CID %s (attempt %d/%d): %v\nOutput: %s\n",
+				hash, i+1, maxRetries, err, string(output))
+			time.Sleep(time.Second * 5)
 			continue
 		}
+		fmt.Printf("[DHT] Successfully announced CID to DHT\n")
+
+		// Wait for announcement to propagate
+		fmt.Printf("[DHT] Waiting 2 seconds for announcement to propagate...\n")
+		time.Sleep(time.Second * 2)
 
 		// Verify the CID is being indexed by checking for providers
+		fmt.Printf("[DHT] Verifying CID providers...\n")
 		cmd = exec.Command(m.BinaryPath, "routing", "findprovs", hash)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("IPFS_PATH=%s", m.DataPath))
 		output, err := cmd.Output()
 		if err != nil {
-			fmt.Printf("Warning: Failed to verify CID providers %s (attempt %d/%d): %v\n", hash, i+1, maxRetries, err)
+			fmt.Printf("[DHT] Warning: Failed to verify CID providers %s (attempt %d/%d): %v\n",
+				hash, i+1, maxRetries, err)
+			time.Sleep(time.Second * 5)
 			continue
 		}
 
 		// Check if we have any providers
-		if len(strings.TrimSpace(string(output))) > 0 {
-			fmt.Printf("Successfully verified CID %s is being provided by peers\n", hash)
+		providers := strings.TrimSpace(string(output))
+		if len(providers) > 0 {
+			fmt.Printf("[DHT] Successfully verified CID %s is being provided by peers\n", hash)
+			fmt.Printf("[DHT] Found providers:\n%s\n", providers)
+
+			// Add extra delay after successful verification
+			fmt.Printf("[DHT] Waiting 3 seconds to ensure full propagation...\n")
+			time.Sleep(time.Second * 3)
 			return nil
 		}
 
-		// Wait before retrying
+		fmt.Printf("[DHT] No providers found for CID %s (attempt %d/%d), retrying...\n",
+			hash, i+1, maxRetries)
 		time.Sleep(time.Second * 5)
 	}
 
@@ -117,10 +140,11 @@ func (m *IPFSManager) AddDirectory(path string) (string, error) {
 	fmt.Printf("Verified pin exists for hash: %s\n", hash)
 
 	// Announce and verify the CID in the DHT
-	if err := m.announceAndVerifyCID(hash, 3); err != nil {
-		fmt.Printf("Warning: %v\n", err)
-		// Don't return error here as the content is still added and pinned
+	fmt.Printf("[DHT] Starting mandatory DHT announcement process...\n")
+	if err := m.announceAndVerifyCID(hash, 5); err != nil {
+		return "", fmt.Errorf("failed to announce and verify CID in DHT: %w", err)
 	}
+	fmt.Printf("[DHT] Successfully completed mandatory DHT announcement process\n")
 
 	return hash, nil
 }
@@ -351,7 +375,20 @@ func (m *IPFSManager) GetIPFSNode() (interface{}, error) {
 		return nil, fmt.Errorf("IPFS daemon is not running")
 	}
 
-	return m.Shell, nil
+	// Create a new shell instance
+	api := shell.NewShell("localhost:5001")
+
+	// Test the connection
+	if _, err := api.ID(); err != nil {
+		return nil, fmt.Errorf("error connecting to IPFS: %w", err)
+	}
+
+	// Create a CoreAPI wrapper around the shell
+	coreAPI := &IPFSCoreAPI{
+		shell: api,
+	}
+
+	return coreAPI, nil
 }
 
 func (m *IPFSManager) GetGateways() []GatewayStatus {

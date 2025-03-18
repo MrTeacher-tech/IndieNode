@@ -1,6 +1,8 @@
 package windows
 
 import (
+	"IndieNode/db/orbitdb"
+	"IndieNode/internal/api"
 	"IndieNode/internal/models"
 	"IndieNode/internal/services/auth"
 	"IndieNode/internal/services/shop"
@@ -61,6 +63,9 @@ type MainWindow struct {
 	shopMgr        *shop.Manager
 	ipfsMgr        *ipfs.IPFSManager
 	authSvc        *auth.Service
+	orbitMgr       *orbitdb.Manager
+	apiServer      *api.Server
+	apiPort        int
 	content        *fyne.Container
 	mainMenu       *fyne.MainMenu
 	tabs           *container.AppTabs
@@ -73,13 +78,16 @@ type MainWindow struct {
 	shopCreator    *ShopCreatorTab
 }
 
-func NewMainWindow(app fyne.App, shopMgr *shop.Manager, ipfsMgr *ipfs.IPFSManager, authSvc *auth.Service) *MainWindow {
+func NewMainWindow(app fyne.App, shopMgr *shop.Manager, ipfsMgr *ipfs.IPFSManager, authSvc *auth.Service, orbitMgr *orbitdb.Manager, apiServer *api.Server, apiPort int) *MainWindow {
 	w := &MainWindow{
 		app:       app,
 		window:    app.NewWindow("IndieNode"), // Initialize the window
 		shopMgr:   shopMgr,
 		ipfsMgr:   ipfsMgr,
 		authSvc:   authSvc,
+		orbitMgr:  orbitMgr,
+		apiServer: apiServer,
+		apiPort:   apiPort,
 		buttonMap: make(map[string]*widget.Button),
 	}
 
@@ -125,7 +133,7 @@ func (w *MainWindow) createUI() {
 	w.shopCreator = shopCreator
 	w.createShopTab = container.NewTabItem("Create Shop", content)
 	w.viewShopsTab = w.createShopList()
-	w.settingsTab = NewSettingsTab(w.window, w.ipfsMgr)
+	w.settingsTab = NewSettingsTab(w.window, w.ipfsMgr, w.orbitMgr, w.apiServer, w.apiPort)
 
 	// Create tabs container with welcome tab first
 	w.tabs = container.NewAppTabs(

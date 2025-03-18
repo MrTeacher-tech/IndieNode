@@ -251,6 +251,12 @@ func (m *Manager) GenerateShop(shop *models.Shop) error {
 		return fmt.Errorf("failed to copy web3.js: %w", err)
 	}
 
+	// Copy shop-api.js file
+	shopApiJsPath := filepath.Join(filepath.Dir(m.baseDir), "templates", "basic", "shop-api.js")
+	if err := m.copyFile(shopApiJsPath, filepath.Join(srcDir, "shop-api.js")); err != nil {
+		return fmt.Errorf("failed to copy shop-api.js: %w", err)
+	}
+
 	// Generate CSS
 	cssPath := filepath.Join(srcDir, "styles.css")
 	if err := m.generateCSS(shop, cssPath); err != nil {

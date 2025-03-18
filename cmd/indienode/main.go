@@ -1,12 +1,15 @@
 package main
 
 import (
+	"IndieNode/db/orbitdb"
+	"IndieNode/internal/api"
 	"IndieNode/internal/dev"
 	"IndieNode/internal/services/auth"
 	"IndieNode/internal/services/shop"
 	"IndieNode/internal/ui/theme"
 	"IndieNode/internal/ui/windows"
 	"IndieNode/ipfs"
+	"context"
 	"flag"
 	"io"
 	"log"
@@ -14,6 +17,7 @@ import (
 	"path/filepath"
 
 	"fyne.io/fyne/v2/app"
+	iface_ipfs "github.com/ipfs/interface-go-ipfs-core"
 )
 
 // copyDevShopToCurrentShop copies the dev shop template to current_shop.json
@@ -65,7 +69,9 @@ func copyDevShopToCurrentShop(shopBaseDir string) error {
 func main() {
 	// Add command line flags
 	serveFlag := flag.Bool("serve", false, "Start development server for the current shop")
+	apiFlag := flag.Bool("api", false, "Start only the API server without the UI")
 	portFlag := flag.Int("port", 8080, "Port to run development server on")
+	apiPortFlag := flag.Int("api-port", 8000, "Port to run the API server on")
 	flag.Parse()
 
 	// If serve flag is set, start the development server
@@ -77,12 +83,6 @@ func main() {
 		}
 		return
 	}
-
-	mainApp := app.NewWithID("com.mrteacher.indienode")
-	mainApp.Settings().SetTheme(theme.NewIndieNodeTheme())
-
-	// Initialize services
-	shopBaseDir := filepath.Join(".", "shops")
 
 	// Initialize IPFS manager first
 	ipfsMgr, err := ipfs.NewIPFSManager(&ipfs.Config{
@@ -97,14 +97,58 @@ func main() {
 		log.Printf("Warning: Failed to start IPFS daemon: %v", err)
 	}
 
-	// We'll handle daemon shutdown in the window close interceptor only
-	// No need for lifecycle hook as it causes double-stopping
+	// Initialize OrbitDB manager - this is needed for the API server
+	orbitConfig := &orbitdb.Config{
+		Directory: filepath.Join(".", "db", "orbitdb", "data"),
+	}
 
-	// Initialize shop manager with IPFS manager
+	// Get the IPFS CoreAPI for OrbitDB
+	ipfsNode, err := ipfsMgr.GetIPFSNode()
+	if err != nil {
+		log.Fatalf("Failed to get IPFS node: %v", err)
+	}
+
+	// Type assertion to get the CoreAPI
+	ipfsCoreAPI, ok := ipfsNode.(iface_ipfs.CoreAPI)
+	if !ok {
+		log.Fatalf("Invalid IPFS node type: expected CoreAPI")
+	}
+
+	orbitMgr, err := orbitdb.NewManager(context.Background(), orbitConfig, ipfsCoreAPI)
+	if err != nil {
+		log.Fatalf("Failed to initialize OrbitDB manager: %v", err)
+	}
+
+	// Start the API server either in standalone mode or alongside the UI
+	apiServer := api.NewServer(orbitMgr, *apiPortFlag)
+
+	// If API-only mode is requested, start the API server and exit
+	if *apiFlag {
+		log.Printf("Starting API server on port %d...", *apiPortFlag)
+		if err := apiServer.Start(); err != nil {
+			log.Fatalf("Failed to start API server: %v", err)
+		}
+		return
+	}
+
+	// Otherwise, start API server in a goroutine and continue with UI
+	go func() {
+		log.Printf("Starting API server on port %d in background...", *apiPortFlag)
+		if err := apiServer.Start(); err != nil && err.Error() != "http: Server closed" {
+			log.Printf("API server error: %v", err)
+		}
+	}()
+
+	// Initialize shop manager with IPFS manager for UI
+	shopBaseDir := filepath.Join(".", "shops")
 	shopMgr, err := shop.NewManager(shopBaseDir, ipfsMgr)
 	if err != nil {
 		log.Fatalf("Failed to initialize shop manager: %v", err)
 	}
+
+	// Continue with UI initialization
+	mainApp := app.NewWithID("com.mrteacher.indienode")
+	mainApp.Settings().SetTheme(theme.NewIndieNodeTheme())
 
 	authSvc := auth.NewService()
 
@@ -117,14 +161,14 @@ func main() {
 
 		// Skip login in dev mode
 		authSvc.SetDevModeUser()
-		mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc)
+		mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc, orbitMgr, apiServer, *apiPortFlag)
 		mainWindow.SetCloseIntercept(func() {
-			// Only stop if daemon is running
-			if ipfsMgr.IsDaemonRunning() {
-				if err := ipfsMgr.StopDaemon(); err != nil {
-					log.Printf("Warning: Failed to stop IPFS daemon: %v", err)
-				}
-			}
+			// Gracefully shut down API server when closing the app
+			ctx, cancel := context.WithTimeout(context.Background(), 5000)
+			defer cancel()
+			apiServer.Stop(ctx)
+
+			// Close the window
 			mainWindow.Close()
 		})
 		mainWindow.Show()
@@ -132,14 +176,14 @@ func main() {
 		// Create login window first
 		loginWindow := windows.NewLoginWindow(mainApp, authSvc, func() {
 			// This is called after successful login
-			mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc)
+			mainWindow := windows.NewMainWindow(mainApp, shopMgr, ipfsMgr, authSvc, orbitMgr, apiServer, *apiPortFlag)
 			mainWindow.SetCloseIntercept(func() {
-				// Only stop if daemon is running
-				if ipfsMgr.IsDaemonRunning() {
-					if err := ipfsMgr.StopDaemon(); err != nil {
-						log.Printf("Warning: Failed to stop IPFS daemon: %v", err)
-					}
-				}
+				// Gracefully shut down API server when closing the app
+				ctx, cancel := context.WithTimeout(context.Background(), 5000)
+				defer cancel()
+				apiServer.Stop(ctx)
+
+				// Close the window
 				mainWindow.Close()
 			})
 			mainWindow.Show()

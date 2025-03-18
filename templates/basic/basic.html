@@ -3,9 +3,11 @@
 <head>
     <title>{{.Name}}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="shop-id" content="{{.ID}}">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/web3@1.5.2/dist/web3.min.js"></script>
     <script src="web3.js"></script>
+    <script src="shop-api.js"></script>
 </head>
 <body>
     <div class="shop-header">
@@ -29,7 +31,8 @@
         </div>
     </div>
 
-    <div class="items-grid">
+    <!-- Static content for initial page load -->
+    <div class="items-grid" id="items-container">
         {{range .Items}}
         <div class="item-card">
             <div class="item-images">
@@ -48,6 +51,9 @@
         </div>
         {{end}}
     </div>
+
+    <!-- Connection status indicator -->
+    <div id="api-status" class="api-status"></div>
 
     <!-- Modal structure -->
     <div id="imageModal" class="modal">
@@ -81,6 +87,43 @@
             if (event.key === "Escape") {
                 closeModal();
             }
+        });
+
+        // Initialize ShopAPI when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            const shopIdMeta = document.querySelector('meta[name="shop-id"]');
+            const shopId = shopIdMeta ? shopIdMeta.getAttribute('content') : '';
+            const itemsContainer = document.getElementById('items-container');
+            const statusContainer = document.getElementById('api-status');
+
+            // Initialize the ShopAPI
+            const shopApi = new ShopAPI({
+                shopId: shopId,
+                onLoad: function(shop) {
+                    // Update status
+                    statusContainer.innerHTML = '<span class="status-connected">Connected to live shop data</span>';
+                    
+                    // Load and render items
+                    shopApi.loadItems().then(items => {
+                        shopApi.renderItems(itemsContainer);
+                    });
+                    
+                    // Add a refresh button
+                    const refreshBtn = document.createElement('button');
+                    refreshBtn.className = 'refresh-button';
+                    refreshBtn.innerHTML = 'Refresh Items';
+                    refreshBtn.addEventListener('click', function() {
+                        shopApi.loadItems().then(items => {
+                            shopApi.renderItems(itemsContainer);
+                        });
+                    });
+                    statusContainer.appendChild(refreshBtn);
+                },
+                onError: function(err) {
+                    // Display offline message in status area
+                    statusContainer.innerHTML = '<span class="status-offline">Unable to connect to live shop data. Showing cached content.</span>';
+                }
+            });
         });
     </script>
 </body>

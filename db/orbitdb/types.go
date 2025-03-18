@@ -2,39 +2,44 @@ package orbitdb
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	orbitdb "berty.tech/go-orbit-db"
 	"berty.tech/go-orbit-db/iface"
+	iface_ipfs "github.com/ipfs/interface-go-ipfs-core"
 )
 
-// Config holds OrbitDB configuration
+// Config holds shop data storage configuration
 type Config struct {
-	Directory    string        // Base directory for OrbitDB files
-	NetworkMode  string        // "public" or "private"
-	Timeout      time.Duration // Connection timeout
-	IPFSEndpoint string        // IPFS API endpoint
+	Directory string // Local directory for caching shop data
 }
 
-// Manager handles OrbitDB operations
+// Manager handles shop data storage using IPFS and OrbitDB
 type Manager struct {
 	ctx         context.Context
 	config      *Config
-	db          orbitdb.OrbitDB
-	shopStore   orbitdb.Store
+	ipfs        iface_ipfs.CoreAPI
 	isConnected bool
+
+	// OrbitDB fields
+	orbitDB   orbitdb.OrbitDB
+	shopDBs   map[string]iface.DocumentStore // Cache of shop databases
+	dbsMutex  sync.RWMutex                   // Mutex for thread-safe access to shopDBs
+	shopCache *ShopCache                     // Cache for shop data
 }
 
 // ShopData represents the shop structure in OrbitDB
 type ShopData struct {
-	ID          string      `json:"id"`
-	Owner       string      `json:"owner"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Created     time.Time   `json:"created"`
-	Updated     time.Time   `json:"updated"`
-	Content     ShopContent `json:"content"`
-	Assets      ShopAssets  `json:"assets"`
+	ID             string      `json:"id"`
+	Owner          string      `json:"owner"`
+	Name           string      `json:"name"`
+	Description    string      `json:"description"`
+	Created        time.Time   `json:"created"`
+	Updated        time.Time   `json:"updated"`
+	Content        ShopContent `json:"content"`
+	Assets         ShopAssets  `json:"assets"`
+	OrbitDBAddress string      `json:"orbitDbAddress"` // OrbitDB address for persistence
 }
 
 // ShopContent holds the dynamic content of a shop
@@ -95,9 +100,4 @@ type ItemInventory struct {
 	Inventory   int64     `json:"inventory"` // -1 represents unlimited
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
-}
-
-// InventoryManager handles inventory operations in OrbitDB
-type InventoryManager struct {
-	store iface.KeyValueStore
 }
