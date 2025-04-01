@@ -19,8 +19,8 @@ contract MockETHRegistrarController is IETHRegistrarController {
         _premiumPrice = premium;
     }
 
-    function setAvailable(bool available) external {
-        _available = available;
+    function setAvailable(bool isAvailable) external {
+        _available = isAvailable;
     }
 
     function rentPrice(

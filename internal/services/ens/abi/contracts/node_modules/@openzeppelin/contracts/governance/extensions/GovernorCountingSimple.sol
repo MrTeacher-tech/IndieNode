@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (governance/extensions/GovernorCountingSimple.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (governance/extensions/GovernorCountingSimple.sol)
 
 pragma solidity ^0.8.20;
 
@@ -77,9 +77,9 @@ abstract contract GovernorCountingSimple is Governor {
         uint256 proposalId,
         address account,
         uint8 support,
-        uint256 totalWeight,
+        uint256 weight,
         bytes memory // params
-    ) internal virtual override returns (uint256) {
+    ) internal virtual override {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
 
         if (proposalVote.hasVoted[account]) {
@@ -88,15 +88,13 @@ abstract contract GovernorCountingSimple is Governor {
         proposalVote.hasVoted[account] = true;
 
         if (support == uint8(VoteType.Against)) {
-            proposalVote.againstVotes += totalWeight;
+            proposalVote.againstVotes += weight;
         } else if (support == uint8(VoteType.For)) {
-            proposalVote.forVotes += totalWeight;
+            proposalVote.forVotes += weight;
         } else if (support == uint8(VoteType.Abstain)) {
-            proposalVote.abstainVotes += totalWeight;
+            proposalVote.abstainVotes += weight;
         } else {
             revert GovernorInvalidVoteType();
         }
-
-        return totalWeight;
     }
 }

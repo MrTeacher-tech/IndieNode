@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (utils/structs/Checkpoints.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (utils/structs/Checkpoints.sol)
 // This file was procedurally generated from scripts/generate/templates/Checkpoints.js.
 
 pragma solidity ^0.8.20;
@@ -36,11 +36,7 @@ library Checkpoints {
      * IMPORTANT: Never accept `key` as a user input, since an arbitrary `type(uint32).max` key set will disable the
      * library.
      */
-    function push(
-        Trace224 storage self,
-        uint32 key,
-        uint224 value
-    ) internal returns (uint224 oldValue, uint224 newValue) {
+    function push(Trace224 storage self, uint32 key, uint224 value) internal returns (uint224, uint224) {
         return _insert(self._checkpoints, key, value);
     }
 
@@ -108,7 +104,7 @@ library Checkpoints {
         if (pos == 0) {
             return (false, 0, 0);
         } else {
-            Checkpoint224 storage ckpt = _unsafeAccess(self._checkpoints, pos - 1);
+            Checkpoint224 memory ckpt = _unsafeAccess(self._checkpoints, pos - 1);
             return (true, ckpt._key, ckpt._value);
         }
     }
@@ -131,30 +127,25 @@ library Checkpoints {
      * @dev Pushes a (`key`, `value`) pair into an ordered list of checkpoints, either by inserting a new checkpoint,
      * or by updating the last one.
      */
-    function _insert(
-        Checkpoint224[] storage self,
-        uint32 key,
-        uint224 value
-    ) private returns (uint224 oldValue, uint224 newValue) {
+    function _insert(Checkpoint224[] storage self, uint32 key, uint224 value) private returns (uint224, uint224) {
         uint256 pos = self.length;
 
         if (pos > 0) {
-            Checkpoint224 storage last = _unsafeAccess(self, pos - 1);
-            uint32 lastKey = last._key;
-            uint224 lastValue = last._value;
+            // Copying to memory is important here.
+            Checkpoint224 memory last = _unsafeAccess(self, pos - 1);
 
             // Checkpoint keys must be non-decreasing.
-            if (lastKey > key) {
+            if (last._key > key) {
                 revert CheckpointUnorderedInsertion();
             }
 
             // Update or push new checkpoint
-            if (lastKey == key) {
-                last._value = value;
+            if (last._key == key) {
+                _unsafeAccess(self, pos - 1)._value = value;
             } else {
                 self.push(Checkpoint224({_key: key, _value: value}));
             }
-            return (lastValue, value);
+            return (last._value, value);
         } else {
             self.push(Checkpoint224({_key: key, _value: value}));
             return (0, value);
@@ -162,7 +153,7 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key strictly bigger than the search key, or `high`
+     * @dev Return the index of the last (most recent) checkpoint with key lower or equal than the search key, or `high`
      * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
      * `high`.
      *
@@ -186,9 +177,9 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key greater or equal than the search key, or `high`
-     * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
-     * `high`.
+     * @dev Return the index of the first (oldest) checkpoint with key is greater or equal than the search key, or
+     * `high` if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and
+     * exclusive `high`.
      *
      * WARNING: `high` should not be greater than the array's length.
      */
@@ -239,11 +230,7 @@ library Checkpoints {
      * IMPORTANT: Never accept `key` as a user input, since an arbitrary `type(uint48).max` key set will disable the
      * library.
      */
-    function push(
-        Trace208 storage self,
-        uint48 key,
-        uint208 value
-    ) internal returns (uint208 oldValue, uint208 newValue) {
+    function push(Trace208 storage self, uint48 key, uint208 value) internal returns (uint208, uint208) {
         return _insert(self._checkpoints, key, value);
     }
 
@@ -311,7 +298,7 @@ library Checkpoints {
         if (pos == 0) {
             return (false, 0, 0);
         } else {
-            Checkpoint208 storage ckpt = _unsafeAccess(self._checkpoints, pos - 1);
+            Checkpoint208 memory ckpt = _unsafeAccess(self._checkpoints, pos - 1);
             return (true, ckpt._key, ckpt._value);
         }
     }
@@ -334,30 +321,25 @@ library Checkpoints {
      * @dev Pushes a (`key`, `value`) pair into an ordered list of checkpoints, either by inserting a new checkpoint,
      * or by updating the last one.
      */
-    function _insert(
-        Checkpoint208[] storage self,
-        uint48 key,
-        uint208 value
-    ) private returns (uint208 oldValue, uint208 newValue) {
+    function _insert(Checkpoint208[] storage self, uint48 key, uint208 value) private returns (uint208, uint208) {
         uint256 pos = self.length;
 
         if (pos > 0) {
-            Checkpoint208 storage last = _unsafeAccess(self, pos - 1);
-            uint48 lastKey = last._key;
-            uint208 lastValue = last._value;
+            // Copying to memory is important here.
+            Checkpoint208 memory last = _unsafeAccess(self, pos - 1);
 
             // Checkpoint keys must be non-decreasing.
-            if (lastKey > key) {
+            if (last._key > key) {
                 revert CheckpointUnorderedInsertion();
             }
 
             // Update or push new checkpoint
-            if (lastKey == key) {
-                last._value = value;
+            if (last._key == key) {
+                _unsafeAccess(self, pos - 1)._value = value;
             } else {
                 self.push(Checkpoint208({_key: key, _value: value}));
             }
-            return (lastValue, value);
+            return (last._value, value);
         } else {
             self.push(Checkpoint208({_key: key, _value: value}));
             return (0, value);
@@ -365,7 +347,7 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key strictly bigger than the search key, or `high`
+     * @dev Return the index of the last (most recent) checkpoint with key lower or equal than the search key, or `high`
      * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
      * `high`.
      *
@@ -389,9 +371,9 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key greater or equal than the search key, or `high`
-     * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
-     * `high`.
+     * @dev Return the index of the first (oldest) checkpoint with key is greater or equal than the search key, or
+     * `high` if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and
+     * exclusive `high`.
      *
      * WARNING: `high` should not be greater than the array's length.
      */
@@ -442,11 +424,7 @@ library Checkpoints {
      * IMPORTANT: Never accept `key` as a user input, since an arbitrary `type(uint96).max` key set will disable the
      * library.
      */
-    function push(
-        Trace160 storage self,
-        uint96 key,
-        uint160 value
-    ) internal returns (uint160 oldValue, uint160 newValue) {
+    function push(Trace160 storage self, uint96 key, uint160 value) internal returns (uint160, uint160) {
         return _insert(self._checkpoints, key, value);
     }
 
@@ -514,7 +492,7 @@ library Checkpoints {
         if (pos == 0) {
             return (false, 0, 0);
         } else {
-            Checkpoint160 storage ckpt = _unsafeAccess(self._checkpoints, pos - 1);
+            Checkpoint160 memory ckpt = _unsafeAccess(self._checkpoints, pos - 1);
             return (true, ckpt._key, ckpt._value);
         }
     }
@@ -537,30 +515,25 @@ library Checkpoints {
      * @dev Pushes a (`key`, `value`) pair into an ordered list of checkpoints, either by inserting a new checkpoint,
      * or by updating the last one.
      */
-    function _insert(
-        Checkpoint160[] storage self,
-        uint96 key,
-        uint160 value
-    ) private returns (uint160 oldValue, uint160 newValue) {
+    function _insert(Checkpoint160[] storage self, uint96 key, uint160 value) private returns (uint160, uint160) {
         uint256 pos = self.length;
 
         if (pos > 0) {
-            Checkpoint160 storage last = _unsafeAccess(self, pos - 1);
-            uint96 lastKey = last._key;
-            uint160 lastValue = last._value;
+            // Copying to memory is important here.
+            Checkpoint160 memory last = _unsafeAccess(self, pos - 1);
 
             // Checkpoint keys must be non-decreasing.
-            if (lastKey > key) {
+            if (last._key > key) {
                 revert CheckpointUnorderedInsertion();
             }
 
             // Update or push new checkpoint
-            if (lastKey == key) {
-                last._value = value;
+            if (last._key == key) {
+                _unsafeAccess(self, pos - 1)._value = value;
             } else {
                 self.push(Checkpoint160({_key: key, _value: value}));
             }
-            return (lastValue, value);
+            return (last._value, value);
         } else {
             self.push(Checkpoint160({_key: key, _value: value}));
             return (0, value);
@@ -568,7 +541,7 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key strictly bigger than the search key, or `high`
+     * @dev Return the index of the last (most recent) checkpoint with key lower or equal than the search key, or `high`
      * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
      * `high`.
      *
@@ -592,9 +565,9 @@ library Checkpoints {
     }
 
     /**
-     * @dev Return the index of the first (oldest) checkpoint with key greater or equal than the search key, or `high`
-     * if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and exclusive
-     * `high`.
+     * @dev Return the index of the first (oldest) checkpoint with key is greater or equal than the search key, or
+     * `high` if there is none. `low` and `high` define a section where to do the search, with inclusive `low` and
+     * exclusive `high`.
      *
      * WARNING: `high` should not be greater than the array's length.
      */

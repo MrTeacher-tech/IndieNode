@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (governance/extensions/GovernorStorage.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (governance/extensions/GovernorStorage.sol)
 
 pragma solidity ^0.8.20;
 
@@ -88,12 +88,7 @@ abstract contract GovernorStorage is Governor {
      */
     function proposalDetails(
         uint256 proposalId
-    )
-        public
-        view
-        virtual
-        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash)
-    {
+    ) public view virtual returns (address[] memory, uint256[] memory, bytes[] memory, bytes32) {
         // here, using memory is more efficient than storage
         ProposalDetails memory details = _proposalDetails[proposalId];
         if (details.descriptionHash == 0) {
@@ -107,19 +102,14 @@ abstract contract GovernorStorage is Governor {
      */
     function proposalDetailsAt(
         uint256 index
-    )
-        public
-        view
-        virtual
-        returns (
-            uint256 proposalId,
+    ) public view virtual returns (uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32) {
+        uint256 proposalId = _proposalIds[index];
+        (
             address[] memory targets,
             uint256[] memory values,
             bytes[] memory calldatas,
             bytes32 descriptionHash
-        )
-    {
-        proposalId = _proposalIds[index];
-        (targets, values, calldatas, descriptionHash) = proposalDetails(proposalId);
+        ) = proposalDetails(proposalId);
+        return (proposalId, targets, values, calldatas, descriptionHash);
     }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.2.0) (proxy/transparent/TransparentUpgradeableProxy.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (proxy/transparent/TransparentUpgradeableProxy.sol)
 
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.20;
 
 import {ERC1967Utils} from "../ERC1967/ERC1967Utils.sol";
 import {ERC1967Proxy} from "../ERC1967/ERC1967Proxy.sol";
@@ -15,8 +15,7 @@ import {ProxyAdmin} from "./ProxyAdmin.sol";
  * include them in the ABI so this interface must be used to interact with it.
  */
 interface ITransparentUpgradeableProxy is IERC1967 {
-    /// @dev See {UUPSUpgradeable-upgradeToAndCall}
-    function upgradeToAndCall(address newImplementation, bytes calldata data) external payable;
+    function upgradeToAndCall(address, bytes calldata) external payable;
 }
 
 /**
@@ -51,8 +50,7 @@ interface ITransparentUpgradeableProxy is IERC1967 {
  * IMPORTANT: This contract avoids unnecessary storage reads by setting the admin only during construction as an
  * immutable variable, preventing any changes thereafter. However, the admin slot defined in ERC-1967 can still be
  * overwritten by the implementation logic pointed to by this proxy. In such cases, the contract may end up in an
- * undesirable state where the admin slot is different from the actual admin. Relying on the value of the admin slot
- * is generally fine if the implementation is trusted.
+ * undesirable state where the admin slot is different from the actual admin.
  *
  * WARNING: It is not recommended to extend this contract to add additional external functions. If you do so, the
  * compiler will not check that there are no selector conflicts, due to the note above. A selector clash between any new
@@ -85,7 +83,7 @@ contract TransparentUpgradeableProxy is ERC1967Proxy {
     /**
      * @dev Returns the admin of this proxy.
      */
-    function _proxyAdmin() internal view virtual returns (address) {
+    function _proxyAdmin() internal virtual returns (address) {
         return _admin;
     }
 

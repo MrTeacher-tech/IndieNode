@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (utils/ShortStrings.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (utils/ShortStrings.sol)
 
 pragma solidity ^0.8.20;
 
@@ -64,7 +64,8 @@ library ShortStrings {
         uint256 len = byteLength(sstr);
         // using `new string(len)` would work locally but is not memory safe.
         string memory str = new string(32);
-        assembly ("memory-safe") {
+        /// @solidity memory-safe-assembly
+        assembly {
             mstore(str, len)
             mstore(add(str, 0x20), sstr)
         }
