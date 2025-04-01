@@ -3,11 +3,13 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@ensdomains/ens-contracts/contracts/registry/ETHRegistrarController.sol";
+import "@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/IPriceOracle.sol";
 
 contract IndieNodeENSRegistrar is Ownable, ReentrancyGuard {
     ETHRegistrarController public immutable controller;
-    uint256 public constant FEE = 0.001 ether; // 0.001 ETH fee
+    uint256 public FEE = 0.001 ether; // 0.001 ETH fee
 
     constructor(address _controller) {
         require(_controller != address(0), "Invalid controller address");
@@ -26,14 +28,14 @@ contract IndieNodeENSRegistrar is Ownable, ReentrancyGuard {
         uint16 ownerControlledFuses
     ) external payable nonReentrant {
         // Calculate total cost including our fee
-        (uint256 base, uint256 premium) = controller.rentPrice(name, duration);
-        uint256 totalCost = base + premium + FEE;
+        IPriceOracle.Price memory price = controller.rentPrice(name, duration);
+        uint256 totalCost = price.base + price.premium + FEE;
 
         // Verify sufficient payment
         require(msg.value >= totalCost, "Insufficient payment");
 
         // Forward registration to ENS controller
-        controller.register{value: base + premium}(
+        controller.register{value: price.base + price.premium}(
             name,
             owner,
             duration,

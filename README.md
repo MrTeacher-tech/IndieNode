@@ -38,7 +38,7 @@ Implement CRUD operations (Create, Read, Update, Delete).
 For next session:
 ALWAYS: Make sure shops still work and are available through gateway url.
 Check orbitdb "Connection", like check where the site is pulling shop data from.
-Resize window
+Try to have content always be centered in the window, especially noticale problem with button text
 
 For later, down the line:
 Allow sites and orbiDB's to be pinned on other nodes

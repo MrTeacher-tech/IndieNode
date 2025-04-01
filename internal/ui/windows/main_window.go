@@ -135,13 +135,24 @@ func (w *MainWindow) createUI() {
 	w.viewShopsTab = w.createShopList()
 	w.settingsTab = NewSettingsTab(w.window, w.ipfsMgr, w.orbitMgr, w.apiServer, w.apiPort)
 
-	// Create tabs container with welcome tab first
 	w.tabs = container.NewAppTabs(
 		w.welcomeTab,
 		w.createShopTab,
 		w.viewShopsTab,
 		w.settingsTab,
 	)
+
+	// Wrap the tabs in a scroll container
+	mainScroll := container.NewScroll(w.tabs)
+
+	// Use Max container to allow proper scrolling and resizing
+	w.content = container.NewMax(mainScroll)
+
+	w.window.SetContent(w.content)
+	w.window.SetMainMenu(w.mainMenu)
+
+	// Set initial window size
+	w.window.Resize(fyne.NewSize(600, 400))
 
 	// Initialize dev mode if enabled
 	if auth.IsDevMode() {
@@ -154,11 +165,6 @@ func (w *MainWindow) createUI() {
 			w.shopCreator.LoadExistingShop(shop)
 		}
 	}
-
-	w.content = container.NewVBox(w.tabs)
-	w.window.SetContent(w.content)
-	w.window.SetMainMenu(w.mainMenu)
-	w.window.Resize(fyne.NewSize(800, 600))
 }
 
 func (w *MainWindow) createShopList() *container.TabItem {
@@ -355,7 +361,8 @@ func (w *MainWindow) createShopList() *container.TabItem {
 
 	// Create a scroll container to hold the list
 	scrollContainer := container.NewScroll(list)
-	scrollContainer.Resize(fyne.NewSize(800, 600)) // Set initial size
+	// Set minimum size for the scroll container
+	scrollContainer.SetMinSize(fyne.NewSize(400, 200))
 
 	// Create the padded container that fills available space
 	paddedContent := container.New(customPadding,
