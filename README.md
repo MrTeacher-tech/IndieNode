@@ -72,4 +72,3 @@ Configure CORS headers to allow your IPFS site to make requests
 Write client-side JavaScript to fetch and render data
 Add a "Shop Offline" message for when the API is unavailable
 This is a pragmatic solution that leverages your existing infrastructure without adding unnecessary complexity.
-
