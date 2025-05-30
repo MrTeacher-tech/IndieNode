@@ -10,7 +10,7 @@ require (
 	github.com/ethereum/go-ethereum v1.15.6
 	github.com/gorilla/mux v1.8.1
 	github.com/ipfs/boxo v0.12.0
-	github.com/ipfs/go-cid v0.4.1
+	github.com/ipfs/go-cid v0.5.0
 	github.com/ipfs/go-ipfs-api v0.7.0
 	github.com/ipfs/go-ipld-format v0.5.0
 	github.com/ipfs/interface-go-ipfs-core v0.11.1

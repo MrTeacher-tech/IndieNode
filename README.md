@@ -38,9 +38,11 @@ Implement CRUD operations (Create, Read, Update, Delete).
 For next session:
 ALWAYS: Make sure shops still work and are available through gateway url.
 Check orbitdb "Connection", like check where the site is pulling shop data from.
-Try to have content always be centered in the window, especially noticale problem with button text
+Try to have content always be centered in the window, especially noticable problem with button text
 
 For later, down the line:
+Email needs to be sent to site owner when a purhcase is made, there probably needs to be a screen after or before purchase that allows the buyer to enter shipping info
+How do I give all the smart contract addresses to each node for using my deployed contracts functions
 Allow sites and orbiDB's to be pinned on other nodes
 
 

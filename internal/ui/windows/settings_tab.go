@@ -4,8 +4,11 @@ import (
 	"IndieNode/db/orbitdb"
 	"IndieNode/internal/api"
 	"IndieNode/internal/services/auth"
+	"IndieNode/internal/services/ens"
+	"IndieNode/internal/services/shop"
 	"IndieNode/ipfs"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +30,7 @@ type Settings struct {
 	window             fyne.Window
 	ipfsMgr            *ipfs.IPFSManager
 	orbitMgr           *orbitdb.Manager
+	shopMgr            *shop.Manager
 	apiServer          *api.Server
 	apiPort            int
 	statusLabel        *widget.Label
@@ -48,16 +52,32 @@ type Settings struct {
 	apiStartTimeLabel *widget.Label
 	apiRequestsLabel  *widget.Label
 
+	// ENS elements
+	ensShopSelector      *widget.Select
+	ensCIDLabel          *widget.Label
+	ensContentHash       *widget.Label
+	ensNameEntry         *widget.Entry
+	ensNameHash          *widget.Label
+	ensManualCIDEntry    *widget.Entry
+	ensManualContentHash *widget.Label
+
 	// For periodic updates
 	updateTimer    *time.Ticker
 	stopUpdateChan chan bool
 }
 
 func NewSettingsTab(window fyne.Window, ipfsMgr *ipfs.IPFSManager, orbitMgr *orbitdb.Manager, apiServer *api.Server, apiPort int) *container.TabItem {
+	shopMgr, err := shop.NewManager("shops", ipfsMgr)
+	if err != nil {
+		// Log error but continue with nil shopMgr
+		fmt.Printf("Warning: Failed to initialize shop manager: %v\n", err)
+	}
+
 	s := &Settings{
 		window:             window,
 		ipfsMgr:            ipfsMgr,
 		orbitMgr:           orbitMgr,
+		shopMgr:            shopMgr,
 		apiServer:          apiServer,
 		apiPort:            apiPort,
 		statusLabel:        widget.NewLabel("Checking IPFS status..."),
@@ -470,6 +490,101 @@ func (s *Settings) createUI() {
 		orbitDBInfo,
 	))
 	s.content.Add(storageCard)
+
+	// ENS Settings section
+	ensCard := widget.NewCard("ENS Settings", "", nil)
+
+	// Create shop selector
+	shops, err := s.shopMgr.ListShops()
+	if err != nil {
+		shops = []string{}
+	}
+	s.ensShopSelector = widget.NewSelect(shops, func(shopName string) {
+		s.updateENSData(shopName)
+	})
+
+	s.ensCIDLabel = widget.NewLabel("CID: Not selected")
+	s.ensContentHash = widget.NewLabel("Content Hash: Not selected")
+
+	copyHashBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		// Extract just the hash part from the label
+		hash := strings.TrimPrefix(s.ensContentHash.Text, "Content Hash: ")
+		s.window.Clipboard().SetContent(hash)
+		dialog.ShowInformation("Copied", "Content hash copied to clipboard", s.window)
+	})
+
+	// Initialize ENS name entry, hash label, and new CID entry
+	s.ensNameEntry = widget.NewEntry()
+	s.ensNameHash = widget.NewLabel("Name Hash (bytes32): Not computed")
+	s.ensManualCIDEntry = widget.NewEntry()
+	s.ensManualCIDEntry.SetPlaceHolder("Enter IPFS CID (optional)")
+	s.ensManualContentHash = widget.NewLabel("Content Hash: Not computed")
+
+	computeENSInfo := func() {
+		name := s.ensNameEntry.Text
+		cid := s.ensManualCIDEntry.Text
+		if name == "" {
+			s.ensNameHash.SetText("Name Hash (bytes32): Please enter an ENS name")
+		} else {
+			if !strings.HasSuffix(name, ".eth") {
+				name = name + ".eth"
+				s.ensNameEntry.SetText(name)
+			}
+			hash := ens.NameHash(name)
+			s.ensNameHash.SetText("Name Hash (bytes32): " + hash.Hex())
+		}
+		if cid != "" {
+			contentHash, err := ens.EncodeIPFSCIDToContenthash(cid)
+			if err != nil {
+				s.ensManualContentHash.SetText("Content Hash: Invalid CID")
+			} else {
+				s.ensManualContentHash.SetText("Content Hash: " + contentHash)
+			}
+		} else {
+			s.ensManualContentHash.SetText("Content Hash: Not computed")
+		}
+	}
+
+	ensCard.SetContent(container.NewVBox(
+		widget.NewLabel("ENS Name (e.g. myshop.eth):"),
+		s.ensNameEntry,
+		container.NewHBox(
+			s.ensNameHash,
+			widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+				hash := strings.TrimPrefix(s.ensNameHash.Text, "Name Hash (bytes32): ")
+				s.window.Clipboard().SetContent(hash)
+				dialog.ShowInformation("Copied", "Name hash copied to clipboard", s.window)
+			}),
+		),
+		widget.NewLabel("IPFS CID (manual entry):"),
+		s.ensManualCIDEntry,
+		container.NewHBox(
+			s.ensManualContentHash,
+			widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+				hash := strings.TrimPrefix(s.ensManualContentHash.Text, "Content Hash: ")
+				s.window.Clipboard().SetContent(hash)
+				dialog.ShowInformation("Copied", "Content hash copied to clipboard", s.window)
+			}),
+		),
+		widget.NewButton("Compute ENS Info", computeENSInfo),
+		widget.NewSeparator(),
+		widget.NewLabel("Select Shop (for quick lookup):"),
+		s.ensShopSelector,
+		container.NewHBox(
+			s.ensCIDLabel,
+			widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+				cid := strings.TrimPrefix(s.ensCIDLabel.Text, "CID: ")
+				s.window.Clipboard().SetContent(cid)
+				dialog.ShowInformation("Copied", "CID copied to clipboard", s.window)
+			}),
+		),
+		container.NewHBox(
+			s.ensContentHash,
+			copyHashBtn,
+		),
+	))
+
+	s.content.Add(ensCard)
 
 	// Initial updates
 	s.updateIPFSStatus()
@@ -949,4 +1064,39 @@ func (s *Settings) exportAllShops() {
 			fmt.Sprintf("Successfully exported %d shops to %s", exportCount, exportDir),
 			s.window)
 	}
+}
+
+// updateENSData updates the ENS-related UI elements for the selected shop
+func (s *Settings) updateENSData(shopName string) {
+	shopDir := filepath.Join("shops", shopName)
+	metadataPath := filepath.Join(shopDir, "ipfs_metadata.json")
+
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		s.ensCIDLabel.SetText("Error: Could not read metadata")
+		s.ensContentHash.SetText("Error: Could not read metadata")
+		return
+	}
+
+	var metadata struct {
+		CID string `json:"cid"`
+	}
+
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		s.ensCIDLabel.SetText("Error: Invalid metadata format")
+		s.ensContentHash.SetText("Error: Invalid metadata format")
+		return
+	}
+
+	// Update CID label
+	s.ensCIDLabel.SetText("CID: " + metadata.CID)
+
+	// Get ENS content hash
+	contentHash, err := ens.EncodeIPFSCIDToContenthash(metadata.CID)
+	if err != nil {
+		s.ensContentHash.SetText("Error: Could not encode content hash")
+		return
+	}
+
+	s.ensContentHash.SetText("Content Hash: " + contentHash)
 }
